@@ -17,22 +17,22 @@ Install
 -------
 
 Now manual:
-'''
+```
 sudo apt-get install python-libtorrent 
 cp btclient.py btclient somewhere
 #can modify btclient script to your preferences
 ln -s /somewhere/btclient /usr/local/bin
-'''
+```
 
 For desktop integration can copy desktop/btclient.desktop to ~/.local/share/applications.
 
 In browser assure that browser asks for protocol handler
 
 Check in your browser profile directory file mimeTypes.rdf and check this:
-'''
+```
 <RDF:Description RDF:about="urn:scheme:handler:magnet"
    NC:alwaysAsk="true">
-'''
+```
 
 
 License
