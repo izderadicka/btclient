@@ -1,0 +1,8 @@
+#!/bin/bash
+INST_DIR=.
+if [ -L $0 ] ; then
+SCRIPT=`ls -l $0 | awk '{print $11}'`
+INST_DIR=`dirname $SCRIPT`
+fi
+
+gnome-terminal --geometry=100x3 --hide-menubar -t "BT Streamer" -x python $INST_DIR/btclient.py -d ~/Downloads/torrents  "$1" 

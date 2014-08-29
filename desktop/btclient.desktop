@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=BTClient
+GenericName=BitTorrent Client
+Comment=Steams torrents to video player
+Exec=btclient %U
+Terminal=false
+TryExec=btclient
+Type=Application
+StartupNotify=true
+MimeType=application/x-bittorrent;x-scheme-handler/magnet;
+Categories=Network;FileTransfer;P2P
+X-AppInstall-Keywords=torrent 
+
+
