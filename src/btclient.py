@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-__version__='0.1'
+__version__='0.1.1'
 
 import libtorrent as lt
 import time
@@ -160,7 +160,7 @@ class BTClient(object):
             self._meta_ready(self._th.get_torrent_info())
         elif self._file and not self._ready:
             progress=float(s.total_wanted_done)/s.total_wanted
-            if progress >= self._start_stream_limit and self._file.done>= min(11000000,self._file.size):
+            if progress >= self._start_stream_limit: #and self._file.done>= min(33554432,self._file.size):
                 self._ready=True
                 if self._on_ready:
                     self._on_ready(self._file, progress>=1.0)
@@ -183,9 +183,9 @@ class BTClient(object):
             
     def _meta_ready(self, meta):
         f, priorities=self._choose_file(meta.files())
-        self._file=BTFile(f.path, self._base_path, f.size, f.index)
-        #print '\nDownloading file %s with priorities %s' % (f.path, priorities);
-        self._th.prioritize_files(priorities)
+        if os.path.exists(os.path.join(self._base_path, f.path)):
+            self._file=BTFile(f.path, self._base_path, f.size, f.index)
+            self._th.prioritize_files(priorities)
             
     def add_listener(self, cb):
         self._monitor.add_listener(cb)
@@ -290,6 +290,10 @@ class Player(object):
     def __init__(self,player):
         self._player=player
         self._proc=None
+        self._player_options=[]
+        player_name=os.path.split(player)[1]
+        if player_name =='mplayer':
+            self._player_options=['--cache=9632', '--cache-min=50']
         
         
     def start(self, f, base, stdin):
@@ -299,6 +303,7 @@ class Player(object):
         env.pop('http_proxy', '')
         env.pop('HTTP_PROXY', '')
         params=[self._player,]
+        params.extend(self._player_options)
         if stdin:
             params.append('-')
             sin=subprocess.PIPE
@@ -314,6 +319,10 @@ class Player(object):
     
     def write(self, data):
         self._proc.stdin.write(data)
+        
+    def close(self):
+        if self._proc.stdin and hasattr(self._proc.stdin, 'close'):
+            self._proc.stdin.close()
         
     def is_playing(self):
         if not self._proc:
@@ -400,7 +409,7 @@ class BTFile(object):
 state_str = ['queued', 'checking', 'downloading metadata', \
                     'downloading', 'finished', 'seeding', 'allocating', 'checking fastresume']    
 def print_status(s):
-    print '\r%.2f%% (of %.1fMB) (down: %.1f kb/s up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
+    print '\r%.2f%% (of %.1fMB) (down: %.1f kB/s up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
         (s.progress * 100, s.total_wanted/1048576.0, s.download_rate / 1000, s.upload_rate / 1000, \
         s.num_seeds, s.num_complete, s.num_peers, s.num_incomplete, state_str[s.state]),
     sys.stdout.write("\033[K")
@@ -439,7 +448,7 @@ def main(args=None):
         if finished:
             base=args.directory
             sin=False
-            print "\nGot all file - %s %s" % (base, f.path)
+            #print "\nGot all file - %s %s" % (base, f.path)
             args.play_file=True
         player.start(f,base, stdin=sin)
         
@@ -461,6 +470,8 @@ def main(args=None):
                     player.write(buf)
                 except IOError:
                     pass
+            else:
+                player.close()
            
     if server:
         server.stop()    
