@@ -15,6 +15,13 @@ import types
 import logging
 import logging.handlers
 import traceback
+from hachoir_metadata import extractMetadata
+from hachoir_parser import createParser
+import hachoir_core.config as hachoir_config
+from reportlab.lib.colors import yellow
+import urllib
+hachoir_config.quiet = True
+
 
 logger=logging.getLogger()
 
@@ -23,6 +30,14 @@ VIDEO_EXTS={'.avi':'video/x-msvideo','.mp4':'video/mp4','.mkv':'video/x-matroska
             '.ogg':'video/ogg', '.webm':'video/webm'}
 
 RANGE_RE=re.compile(r'bytes=(\d+)-')
+
+def get_duration(fn):
+    p=createParser(unicode(fn))
+    m=extractMetadata(p)
+    if m:
+        return m.getItem('duration',0) and m.getItem('duration',0).value
+
+
 def parse_range(range):  # @ReservedAssignment
     if range:
         m=RANGE_RE.match(range)
@@ -88,7 +103,7 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
             
     def do_HEAD(self, only_header=True):
         parsed_url=urlparse.urlparse(self.path)
-        if parsed_url.path=='/'+self.server.file.path:
+        if urllib.unquote_plus(parsed_url.path)=='/'+self.server.file.path:
             self._offset=0
             size,mime = self._file_info()
             range=None  # @ReservedAssignment
@@ -102,6 +117,7 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
             self.send_resp_header(mime, size, range, only_header)
             return True
         else:
+            logger.error('Requesting wrong path %s, but file is', parsed_url.path, '/'+self.server.file.path)
             self.send_error(404, 'Not Found')
         
     def send_resp_header(self, cont_type, cont_length, range=False, only_header=False):  # @ReservedAssignment
@@ -160,10 +176,15 @@ class BTClient(object):
             self._meta_ready(self._th.get_torrent_info())
         elif self._file and not self._ready:
             progress=float(s.total_wanted_done)/s.total_wanted
-            if progress >= self._start_stream_limit: #and self._file.done>= min(33554432,self._file.size):
-                self._ready=True
-                if self._on_ready:
-                    self._on_ready(self._file, progress>=1.0)
+            if progress >= self._start_stream_limit and self._file.done>= min(10000000,self._file.size):
+                done=progress>=1.0
+                r=self._file.byte_rate
+                if r:
+                    self._monitor.set_desired_rate(r)
+                if done or not r or r < s.download_rate:
+                    self._ready=True
+                    if self._on_ready:
+                        self._on_ready(self._file, done)
         if self._file and s.state>=3:
             idx=self._file.index
             prog=self._th.file_progress()[idx]
@@ -234,12 +255,6 @@ class BTClient(object):
         self._ses.stop_dht()
     
     
-    class ReadyListener(object):
-        def __init__(self, client):
-            self._client=client
-        def check_ready(self, s):
-            pass
-        
     class Monitor(Thread): 
         def __init__(self):
             Thread.__init__(self,name="Torrent Status Monitor")
@@ -251,6 +266,10 @@ class BTClient(object):
             self._running=True
             self._start=self.start
             self.start=None
+            self._rate=None
+            
+        def set_desired_rate(self, val):
+            self._rate=val
             
         def monitor(self, th): 
             self._th = th
@@ -279,6 +298,8 @@ class BTClient(object):
     
             while (self._running):
                 s = self._th.status()
+                s.desired_rate=self._rate
+                    
                 with self._lock:
                     for cb in self._listeners:
                         cb(s)
@@ -313,7 +334,8 @@ class Player(object):
             params.append(urlparse.urljoin(base, f.path))
             sin=None
         self._proc=subprocess.Popen(params, 
-                                    stdout=null_dev, stderr=null_dev, env=env, 
+                                    stdout=null_dev, stderr=null_dev, 
+                                    env=env, 
                                     stdin=sin)
     
     
@@ -351,6 +373,15 @@ class BTFile(object):
         
     def close(self):
         self._file and self._file.close()
+    
+    @property    
+    def duration(self):
+        return get_duration(self._full_path)
+    @property    
+    def byte_rate(self):
+        d=self.duration
+        if d:
+            return self.size / d.total_seconds()
         
     def reset(self):
         self._file.seek(0)
@@ -409,8 +440,25 @@ class BTFile(object):
 state_str = ['queued', 'checking', 'downloading metadata', \
                     'downloading', 'finished', 'seeding', 'allocating', 'checking fastresume']    
 def print_status(s):
-    print '\r%.2f%% (of %.1fMB) (down: %.1f kB/s up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
-        (s.progress * 100, s.total_wanted/1048576.0, s.download_rate / 1000, s.upload_rate / 1000, \
+    color=''
+    default='\033[39m'
+    green='\033[32m'
+    red='\033[31m'
+    yellow='\033[33m'
+    if s.progress >=1.0 or not s.desired_rate or s.state > 3:
+        color=default
+    elif s.desired_rate > s.download_rate:
+        color=red
+    elif s.download_rate > s.desired_rate and s.download_rate < s.desired_rate *1.2:
+        color=yellow
+    else:
+        color=green
+        
+    
+    print '\r%.2f%% (of %.1fMB) (down: %s%.1f kB/s\033[39m(need %.1f) up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
+        (s.progress * 100, s.total_wanted/1048576.0, 
+         color, s.download_rate / 1000, s.desired_rate/1000.0 if s.desired_rate else 0.0,
+         s.upload_rate / 1000, \
         s.num_seeds, s.num_complete, s.num_peers, s.num_incomplete, state_str[s.state]),
     sys.stdout.write("\033[K")
     sys.stdout.flush()
@@ -423,7 +471,7 @@ def main(args=None):
     p.add_argument("torrent", help="Torrent file, link to file or magnet link")
     p.add_argument("-d", "--directory", default="./", help="directory to save download files")
     p.add_argument("-p", "--player", default="/usr/bin/mplayer", help="Video player executable")
-    p.add_argument("-m", "--minimum", default=2.0, type=float, help="Minimum % of file to be downloaded to start player")
+    p.add_argument("-m", "--minimum", default=5.0, type=float, help="Minimum %% of file to be downloaded to start player")
     p.add_argument("--port", type=int, default=5001,help="Port for http server")
     p.add_argument("--debug-log", default='',help="File for debug logging")
     p.add_argument("--http", action='store_true', help='starts HTTP server to stream file (works with vlc, but not mplayer, which works with via stdin)')
@@ -476,7 +524,7 @@ def main(args=None):
     if server:
         server.stop()    
     if player.rcode != 0:
-        sys.stderr.write('Player ended with error %d\n' % player.rcode)
+        sys.stderr.write('Player ended with error %d\n' % player.rcode or 0)
     
 if __name__=='__main__':
     try:

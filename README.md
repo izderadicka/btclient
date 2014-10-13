@@ -19,6 +19,7 @@ Install
 Now manual:
 ```
 sudo apt-get install python-libtorrent 
+sudo pip install hachoir-metadata hachoir-core hachoir-parser
 cp btclient.py btclient somewhere
 #can modify btclient script to your preferences
 ln -s /somewhere/btclient /usr/local/bin
