@@ -20,6 +20,7 @@ from hachoir_parser import createParser
 import hachoir_core.config as hachoir_config
 from reportlab.lib.colors import yellow
 import urllib
+import SocketServer
 hachoir_config.quiet = True
 
 
@@ -49,7 +50,8 @@ def parse_range(range):  # @ReservedAssignment
     return 0
 
 
-class StreamServer(htserver.HTTPServer):
+class StreamServer(SocketServer.ThreadingMixIn, htserver.HTTPServer):
+    daemon_threads = True
     def __init__(self, address, handler_class, tfile=None, allow_range=True):
         htserver.HTTPServer.__init__(self,address,handler_class)
         self.file=tfile
@@ -126,6 +128,8 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
         self.send_header('Content-Type', cont_type)
         self.send_header('Content-Length', cont_length)
         self.send_header('Connection', 'close')
+        self.send_header('transferMode.dlna.org', 'Streaming')
+        self.send_header('contentFeatures.dlna.org', 'DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000')
         if self.server.allow_range:
             self.send_header('Accept-Ranges', 'bytes')
         else:
@@ -313,8 +317,8 @@ class Player(object):
         self._proc=None
         self._player_options=[]
         player_name=os.path.split(player)[1]
-        if player_name =='mplayer':
-            self._player_options=['--cache=9632', '--cache-min=50']
+#         if player_name =='mplayer':
+#             self._player_options=['--cache=9632', '--cache-min=50']
         
         
     def start(self, f, base, stdin):
@@ -485,7 +489,7 @@ def main(args=None):
     player=Player(args.player)
     server=None
     if args.http:
-        server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=False)
+        server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=True)
     def start_play(f, finished):
         base=None
         if args.http:
