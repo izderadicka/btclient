@@ -85,7 +85,7 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
         if self.do_HEAD(only_header=False):
             self.server.file.seek( self._offset)
             while True:
-                buf= self.server.file.read(65536)
+                buf= self.server.file.read(1024) 
                 if buf:
                     if logger.level<= logging.DEBUG:
                         logger.debug('Sending %d bytes', len(buf))
