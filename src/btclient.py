@@ -79,16 +79,16 @@ class StreamServer(SocketServer.ThreadingMixIn, htserver.HTTPServer):
         t.start()
         
 class BTFileHandler(htserver.BaseHTTPRequestHandler):
-    
+    protocol_version = 'HTTP/1.1'
     def do_GET(self):
         
         if self.do_HEAD(only_header=False):
             self.server.file.seek( self._offset)
+            if logger.level<= logging.DEBUG:
+                    logger.debug('Start sending data')
             while True:
                 buf= self.server.file.read(1024) 
                 if buf:
-                    if logger.level<= logging.DEBUG:
-                        logger.debug('Sending %d bytes', len(buf))
                     self.wfile.write(buf)
                 else:
                     if logger.level<= logging.DEBUG:
@@ -112,10 +112,9 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
             if self.server.allow_range:
                 range=parse_range(self.headers.get('Range', None))  # @ReservedAssignment
                 if range:
-                    size=size-range
-                    if size <0:  size=0
                     self._offset=range
-                    range=(range,size,size)  # @ReservedAssignment
+                    range=(range,size-1,size)  # @ReservedAssignment
+                    logger.debug('Request range %s - (header is %s', range,self.headers.get('Range', None) )
             self.send_resp_header(mime, size, range, only_header)
             return True
         else:
@@ -124,12 +123,13 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
         
     def send_resp_header(self, cont_type, cont_length, range=False, only_header=False):  # @ReservedAssignment
         #logger.debug('range is %s'% str(range))
-        self.send_response(200, 'OK')
+        if self.server.allow_range and range:
+            self.send_response(206, 'Partial Content')
+        else:
+            self.send_response(200, 'OK')
         self.send_header('Content-Type', cont_type)
-        self.send_header('Content-Length', cont_length)
-        self.send_header('Connection', 'close')
-        self.send_header('transferMode.dlna.org', 'Streaming')
-        self.send_header('contentFeatures.dlna.org', 'DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000')
+        #self.send_header('transferMode.dlna.org', 'Streaming')
+        #self.send_header('contentFeatures.dlna.org', 'DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000')
         if self.server.allow_range:
             self.send_header('Accept-Ranges', 'bytes')
         else:
@@ -137,6 +137,12 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
         if self.server.allow_range and range:
             if isinstance(range, (types.TupleType, types.ListType)) and len(range)==3:
                 self.send_header('Content-Range', 'bytes %d-%d/%d' % range)    
+                self.send_header('Content-Length', range[1]-range[0]+1)
+            else:
+                raise ValueError('Invalid range value')
+        else:
+            self.send_header('Content-Length', cont_length)
+        self.send_header('Connection', 'close')    
         if not only_header: self.end_headers()
         
     def log_message(self, format, *args):  # @ReservedAssignment
@@ -437,6 +443,9 @@ class BTFile(object):
         
     def tell(self):
         return self._file.tell()
+    
+    def __str__(self):
+        return self._full_path
         
           
                 
@@ -490,6 +499,7 @@ def main(args=None):
     server=None
     if args.http:
         server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=True)
+        logger.debug('Started http server on port %d', args.port)
     def start_play(f, finished):
         base=None
         if args.http:
@@ -500,11 +510,13 @@ def main(args=None):
         if finished:
             base=args.directory
             sin=False
-            #print "\nGot all file - %s %s" % (base, f.path)
+            logger.debug('File is already downloaded, will play it directly')
             args.play_file=True
         player.start(f,base, stdin=sin)
+        logger.debug('Started media player for %s', f)
         
     c.on_file_ready(start_play)
+    logger.debug('Starting torrent client')
     c.start_torrent(args.torrent)
     while not c.is_file_ready():
         time.sleep(1)
@@ -516,7 +528,7 @@ def main(args=None):
         if args.http or hasattr(args, 'play_file') and args.play_file:
             time.sleep(1)
         else:
-            buf=f.read(65536)
+            buf=f.read(1024)
             if buf:
                 try:
                     player.write(buf)
@@ -524,14 +536,17 @@ def main(args=None):
                     pass
             else:
                 player.close()
-           
+    logger.debug('Play ended')       
     if server:
         server.stop()    
     if player.rcode != 0:
-        sys.stderr.write('Player ended with error %d\n' % player.rcode or 0)
+        msg='Player ended with error %d\n' % (player.rcode or 0)
+        sys.stderr.write(msg)
+        logger.error(msg)
     
 if __name__=='__main__':
     try:
         main()
     except Exception:
         traceback.print_exc()
+        logger.exception('General error')
