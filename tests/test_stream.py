@@ -10,28 +10,43 @@ from threading import Timer, Thread
 import urllib2
 import time
 import StringIO
-test_file='dejavu/DejaVuSans.ttf'
-test_base='/usr/share/fonts/truetype/'
+import tempfile
 
+from test_file import Peer_Request
+TEST_FILE_SIZE= 12111222
+piece_size=2048
 
+import logging
+logging.basicConfig(level=logging.DEBUG)
 
 class Test(unittest.TestCase):
 
 
     def setUp(self):
         
-        size = os.stat(os.path.join(test_base, test_file)).st_size
+        f=tempfile.NamedTemporaryFile(delete=False)
+        s=os.urandom(TEST_FILE_SIZE)
+        f.write(s)
+        self.fname= f.name
+        f.close()
+        
+        size=os.stat(self.fname).st_size
+        
+        
+        fmap=Peer_Request(0, 2000, size)
+        pieces=[False] * (2+ TEST_FILE_SIZE / piece_size)
         self.tf_size=size
-        self.file=BTFile(test_file, test_base, size, 1)
+        fname=os.path.split(self.fname)[1]
+        self.file=BTFile(fname, '/tmp',1,fmap, pieces, piece_size, lambda _: None)
         self.server= StreamServer(('127.0.0.1', 5001), BTFileHandler, self.file)
         self.t=Thread(target=self.server.handle_request)
         self.t.start()
         
-    def update_file(self,n=16384):
-            size=min(self.file.done+n, self.file.size)
-            self.file.update_done(size)
-            if size< self.file.size:
-                t=Timer(0.005, self.update_file, args=[n])
+    def update_file(self,n):
+            pieces=[True] * n + [False] * (2+ TEST_FILE_SIZE / piece_size -n)
+            self.file.update_pieces(pieces)
+            if n<= 2+ TEST_FILE_SIZE / piece_size:
+                t=Timer(0.001, self.update_file, args=[n+1])
                 t.daemon=True
                 t.start()
         
@@ -40,14 +55,14 @@ class Test(unittest.TestCase):
 
     def tearDown(self):
         self.server.stop()
-        self.file.close()
+        os.remove(self.fname) 
         time.sleep(0.1)
         
 
 
     def notest_get_all(self):
-        #self.update_file(16)
-        self.file.update_done(self.tf_size)
+        self.update_file(1)
+        
         r=urllib2.urlopen('http://localhost:5001/'+self.file.path)
         res=r.read()
         
@@ -63,7 +78,7 @@ class Test(unittest.TestCase):
         self.assertEqual(len(res),self.tf_size)
         
     def test_range(self):
-        self.update_file(16384)
+        self.update_file(1)
         req=urllib2.Request('http://localhost:5001/'+self.file.path, 
                             headers={'Range': 'bytes=100000-'})
         res=urllib2.urlopen(req)
