@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-__version__='0.1.1'
+__version__='0.2.0'
 
 import libtorrent as lt
 import time
@@ -24,7 +24,7 @@ from distutils.spawn import find_executable
 import socket
 import pprint
 import collections
-from math import ceil, floor
+from math import floor
 
 
 hachoir_config.quiet = True
@@ -35,6 +35,9 @@ VIDEO_EXTS={'.avi':'video/x-msvideo','.mp4':'video/mp4','.mkv':'video/x-matroska
             '.ogg':'video/ogg', '.webm':'video/webm'}
 
 RANGE_RE=re.compile(r'bytes=(\d+)-')
+
+#offset from end to download first
+FILE_TAIL=10000
 
 def get_duration(fn):
     p=createParser(unicode(fn))
@@ -103,7 +106,7 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
     def do_GET(self):
         
         if self.do_HEAD(only_header=False):
-            with self.server.file.create_cursor() as f:
+            with self.server.file.create_cursor() as f: 
                 f.seek( self._offset)
                 if logger.level<= logging.DEBUG:
                         logger.debug('Start sending data')
@@ -190,6 +193,7 @@ class BTClient(object):
         self._monitor.add_listener(self._check_ready)
         self._ready=False
         self._file = None
+        self._has_tail=False
     
     
     @property
@@ -202,20 +206,25 @@ class BTClient(object):
     def is_file_ready(self):
         return self._ready 
         
-    def _check_ready(self, s):
-        if s.state>=3 and  s.state <= 5 and not self._file and s.progress>0.01:
+    def _check_ready(self, s, **kwargs):
+        if s.state>=3 and  s.state <= 5 and not self._file and s.progress>0:
             self._meta_ready(self._th.get_torrent_info())
-        elif self._file and not self._ready:
+            logger.debug('Got torrent metadata and start download')
+        elif not self._has_tail and self._file and self._file.can_read(self._file.size-1,1):
+            self._has_tail=True
+            self.prioritize(0)
+            logger.debug('Got file %s tail', self._file.path)
+        elif self._has_tail and self._file and not self._ready:
             progress=float(s.total_wanted_done)/s.total_wanted
             if progress >= self._start_stream_limit: #and self._file.done>= min(10000000,self._file.size):
                 done=progress>=1.0
                 r=self._file.byte_rate
                 if r:
                     self._monitor.set_desired_rate(r)
-                if done or not r or r < s.download_rate or True:# remtrue
-                    self._ready=True
-                    if self._on_ready:
-                        self._on_ready(self._file, done)
+                #if done or not r or r < s.download_rate :# if want to wait until reasonable download rate is reached
+                self._ready=True
+                if self._on_ready:
+                    self._on_ready(self._file, done)
         if self._file and s.state>=3:
 #             idx=self._file.index
 #             prog=self._th.file_progress()[idx]
@@ -227,25 +236,29 @@ class BTClient(object):
         if search:
             videos=filter(lambda f: re.match(search, f.path), videos)
         f = sorted(videos, key=lambda f:f.size)[-1]
-        l= [0 for _i in xrange(len(files))]
         i = files.index(f)
-        l[i]=1
         f.index=i
-        return f,l
+        return f
             
     def _meta_ready(self, meta):
-        f, priorities=self._choose_file(meta.files())
-        if os.path.exists(os.path.join(self._base_path, f.path)):
+        f=self._choose_file(meta.files())
+        if os.path.exists(os.path.join(self._base_path, f.path)): #TODO:may now it's not needed that file physically exists
             fmap=meta.map_file(f.index, 0, f.size)
             pieces=self._th.status().pieces
             self._file=BTFile(f.path, self._base_path, f.index,fmap, pieces, meta.piece_length(),
                               self.prioritize)
-            self.prioritize(self._file.first_piece, self._file.last_piece)
+            self._monitor.add_to_ctx('file', self._file)
+            # video player usually checks tail of file - last few ks - so get them first
+            self.prioritize(self._file.size - FILE_TAIL)
         logger.debug('File %s pieces (pc=%d, ofs=%d, sz=%d), total_pieces=%d, pc_length=%d', 
                      f.path,fmap.piece, fmap.start, fmap.length, 
                      meta.num_pieces(), meta.piece_length() )
         
-    def prioritize(self,first_piece, last_piece=None):
+    def prioritize(self,offset, size=None):
+        first_piece=self._file.piece_no_abs(offset)
+        last_piece=None
+        if size:
+            last_piece=self._file.piece_no_abs(offset+size)
         meta=self._th.get_torrent_info()
         priorities=[0 if i < first_piece or (last_piece is not None and i>last_piece) 
                     else 1 for i in xrange(meta.num_pieces())]
@@ -311,7 +324,11 @@ class BTClient(object):
             self._start=self.start
             self.start=None
             self._rate=None
+            self._ctx={}
             
+        def add_to_ctx(self,key,val):
+            self._ctx[key]=val   
+             
         def set_desired_rate(self, val):
             self._rate=val
             
@@ -346,7 +363,7 @@ class BTClient(object):
                     
                 with self._lock:
                     for cb in self._listeners:
-                        cb(s)
+                        cb(s, download_queue=self._th.get_download_queue(), ctx=self._ctx)
                 self._wait_event.wait(1.0)
 
 
@@ -382,8 +399,8 @@ class Player(object):
         self._player_options=[]
         self._log =None
         player_name=os.path.split(player)[1]
-#         if player_name =='mplayer':
-#             self._player_options=['--cache=9632', '--cache-min=50']
+        if player_name =='mplayer':
+            self._player_options=[]#'--nocache']#'--cache=8192', '--cache-min=50']
         
         
     def start(self, f, base, stdin):
@@ -540,10 +557,8 @@ class BTCursor(object):
             n= self._btfile.size-self._file.tell()
         if self._file.tell() >= self._btfile.size:
             return None
-        
         while True:
             to_read,wait_for_piece=self._btfile.can_read(self._file.tell(), n)
-            
             if to_read>0:
                 return self._file.read(to_read)
             self._wait_for_piece=wait_for_piece
@@ -561,10 +576,10 @@ class BTCursor(object):
             raise ValueError('Seeking beyond file size')
         elif n<0:
             raise ValueError('Seeking negative')
-        
+        self._wait_for_piece=None
+        self._btfile.prioritize(n)
         while not self._btfile.has_offset(n):
             self._wait_for_piece=self._btfile.piece_no(n)
-            self._btfile._prioritize(self._wait_for_piece)
             self._wait_event.clear()
             self._wait_event.wait()
         self._file.seek(n)
@@ -611,6 +626,9 @@ class BTFile(object):
     def piece_no(self, n):
         return self._pieces.piece_no(n)
     
+    def piece_no_abs(self, n):
+        return self._pieces.piece_no(n) + self._pieces.first_piece_abs
+    
     @property
     def first_piece(self):
         return self._pieces.first_piece_abs
@@ -641,10 +659,9 @@ class BTFile(object):
             for c in self._cursors:
                 c.wake(test_cb)
                  
-    def _prioritize(self, start): 
-        start=start+self.first_piece
-        logger.debug("Prioritizing pieces %d - ",start)      
-        self._prioritize_fn(start)
+    def prioritize(self, offset): 
+        logger.debug("Prioritizing offset %d - ",offset)      
+        self._prioritize_fn(offset)
         
     def remove(self):
         os.unlink(self._full_path)
@@ -658,7 +675,7 @@ class BTFile(object):
                 
 state_str = ['queued', 'checking', 'downloading metadata', \
                     'downloading', 'finished', 'seeding', 'allocating', 'checking fastresume']    
-def print_status(s):
+def print_status(s,**kwargs):
     color=''
     default='\033[39m'
     green='\033[32m'
@@ -681,7 +698,14 @@ def print_status(s):
         s.num_seeds, s.num_complete, s.num_peers, s.num_incomplete, state_str[s.state]),
     sys.stdout.write("\033[K")
     sys.stdout.flush()
-    
+
+def debug_download_queue(s,download_queue,ctx):
+    if ctx.has_key('file'):
+        first=ctx['file'].first_piece
+    else:
+        first=0
+    q=filter(lambda x: x.piece_index+first,download_queue)
+    logger.debug('Download queue: %s', q)
     
 def print_file(f):
     print '\nFile %s (%.1fkB) is ready' %(f.path, f.size/1000.0)
@@ -691,10 +715,10 @@ def main(args=None):
     p.add_argument("torrent", help="Torrent file, link to file or magnet link")
     p.add_argument("-d", "--directory", default="./", help="directory to save download files")
     p.add_argument("-p", "--player", default="mplayer", choices=["mplayer","vlc"], help="Video player")
-    p.add_argument("-m", "--minimum", default=5.0, type=float, help="Minimum %% of file to be downloaded to start player")
+    p.add_argument("-m", "--minimum", default=2.0, type=float, help="Minimum %% of file to be downloaded to start player")
     p.add_argument("--port", type=int, default=5001,help="Port for http server")
     p.add_argument("--debug-log", default='',help="File for debug logging")
-    p.add_argument("--http", action='store_true', help='starts HTTP server to stream file (otherwise via stdin)')
+    p.add_argument("--stdin", action='store_true', help='sends video to player via stdin (no seek then)')
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)
@@ -702,22 +726,24 @@ def main(args=None):
         logger.addHandler(h)
     c= BTClient(args.directory, start_stream_limit=args.minimum/ 100.0)
     c.add_listener(print_status)
+    if args.debug_log:
+        c.add_listener(debug_download_queue)
     player=find_executable(args.player)
     if not player:
         print >>sys.stderr, "Cannot find player %s on path"%args.player
     player=Player(player)
     
     server=None
-    if args.http:
+    if not args.stdin:
         server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=True)
         logger.debug('Started http server on port %d', args.port)
     def start_play(f, finished):
         base=None
-        if args.http:
+        if not args.stdin:
             server.set_file(f)
             server.run()
             base='http://127.0.0.1:'+ str(args.port)+'/'
-        sin=not args.http
+        sin=args.stdin
         if finished:
             base=args.directory
             sin=False
@@ -737,7 +763,7 @@ def main(args=None):
         while True:
             if not player.is_playing():
                 break
-            if args.http or hasattr(args, 'play_file') and args.play_file:
+            if not args.stdin or hasattr(args, 'play_file') and args.play_file:
                 time.sleep(1)
             else:
                     buf=f.read(1024)

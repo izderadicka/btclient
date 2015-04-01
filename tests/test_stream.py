@@ -13,6 +13,9 @@ import StringIO
 import tempfile
 
 from test_file import Peer_Request
+import cProfile
+import pstats
+from time import sleep
 TEST_FILE_SIZE= 12111222
 piece_size=2048
 
@@ -42,13 +45,16 @@ class Test(unittest.TestCase):
         self.t=Thread(target=self.server.handle_request)
         self.t.start()
         
-    def update_file(self,n):
-            pieces=[True] * n + [False] * (2+ TEST_FILE_SIZE / piece_size -n)
-            self.file.update_pieces(pieces)
-            if n<= 2+ TEST_FILE_SIZE / piece_size:
-                t=Timer(0.001, self.update_file, args=[n+1])
-                t.daemon=True
-                t.start()
+    def update_file(self):
+        def update():
+            for n in xrange(1,2+ TEST_FILE_SIZE / piece_size+1):
+                pieces=[True] * n + [False] * (2+ TEST_FILE_SIZE / piece_size -n)
+                self.file.update_pieces(pieces)
+                sleep(0.001)
+                
+        t=Thread(target=update)
+        t.setDaemon(True)
+        t.start()
         
         
 
@@ -61,7 +67,7 @@ class Test(unittest.TestCase):
 
 
     def notest_get_all(self):
-        self.update_file(1)
+        self.update_file()
         
         r=urllib2.urlopen('http://localhost:5001/'+self.file.path)
         res=r.read()
@@ -69,16 +75,9 @@ class Test(unittest.TestCase):
         self.assertEqual(len(res),self.tf_size)
         
         
-    def notest_get_gradually(self):
-        self.update_file(16384)
-        #self.file.update_done(self.tf_size)
-        r=urllib2.urlopen('http://localhost:5001/'+self.file.path)
-        res=r.read()
-        
-        self.assertEqual(len(res),self.tf_size)
         
     def test_range(self):
-        self.update_file(1)
+        self.update_file()
         req=urllib2.Request('http://localhost:5001/'+self.file.path, 
                             headers={'Range': 'bytes=100000-'})
         res=urllib2.urlopen(req)
@@ -97,5 +96,17 @@ class Test(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    #import sys;sys.argv = ['', 'Test.testName']
-    unittest.main()
+    suite = unittest.TestLoader().loadTestsFromTestCase(Test)
+    def runtests():
+        unittest.TextTestRunner().run(suite)
+
+    s = cProfile.run('runtests()',filename='test_stream.statste')
+#     pr = cProfile.Profile()
+#     pr.enable()
+#     runtests()    
+#     pr.disable()
+#     s = StringIO.StringIO()
+#     sortby = 'cumulative'
+#     ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+#     ps.print_stats()
+#     print s.getvalue()
