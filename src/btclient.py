@@ -171,9 +171,7 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
         
     def log_message(self, format, *args):  # @ReservedAssignment
         logger.debug(format, *args)
-        
-    
-            
+     
 
 class BTClient(object):
     def __init__(self, path_to_store, 
@@ -189,7 +187,7 @@ class BTClient(object):
         self._ses.listen_on(port_min, port_max)
         self._start_services()
         self._th=None
-        self._monitor= BTClient.Monitor()
+        self._monitor= BTClient.Monitor(self)
         self._monitor.add_listener(self._check_ready)
         self._ready=False
         self._file = None
@@ -203,8 +201,13 @@ class BTClient(object):
     def on_file_ready(self, action):
         self._on_ready=action
         
+    @property    
     def is_file_ready(self):
         return self._ready 
+    
+    @property
+    def has_file_tail(self):
+        return self._has_tail
         
     def _check_ready(self, s, **kwargs):
         if s.state>=3 and  s.state <= 5 and not self._file and s.progress>0:
@@ -261,8 +264,10 @@ class BTClient(object):
             last_piece=self._file.piece_no_abs(offset+size)
         meta=self._th.get_torrent_info()
         priorities=[0 if i < first_piece or (last_piece is not None and i>last_piece) 
-                    else 1 for i in xrange(meta.num_pieces())]
+                    else (7 if i==first_piece else 1) for i in xrange(meta.num_pieces())]
+        
         self._th.prioritize_pieces(priorities)
+        
         
             
     def add_listener(self, cb):
@@ -313,7 +318,7 @@ class BTClient(object):
     
     
     class Monitor(Thread): 
-        def __init__(self):
+        def __init__(self, client):
             Thread.__init__(self,name="Torrent Status Monitor")
             self.daemon=True
             self._th=None
@@ -324,7 +329,7 @@ class BTClient(object):
             self._start=self.start
             self.start=None
             self._rate=None
-            self._ctx={}
+            self._ctx={'client':client}
             
         def add_to_ctx(self,key,val):
             self._ctx[key]=val   
@@ -468,6 +473,14 @@ class BTPieces(object):
     @property
     def last_piece_abs(self):
         return self._first_piece + self._last_piece
+    
+    @property    
+    def piece_size(self):
+        return self._piece_size
+        
+    @property
+    def pieces(self):
+        return self._pieces
         
     def _map_pieces(self, pieces):  
         res= pieces[self._first_piece:self._first_piece+self._last_piece+1]
@@ -558,10 +571,12 @@ class BTCursor(object):
         if self._file.tell() >= self._btfile.size:
             return None
         while True:
-            to_read,wait_for_piece=self._btfile.can_read(self._file.tell(), n)
+            ofs=self._file.tell()
+            to_read,wait_for_piece=self._btfile.can_read(ofs, n)
             if to_read>0:
                 return self._file.read(to_read)
             self._wait_for_piece=wait_for_piece
+            logger.debug('Read - waiting for ofs: %d, piece:%d', ofs, wait_for_piece)
             self._wait_event.clear()
             self._wait_event.wait()
         to_read=min(self._done - self._file.tell(), n)
@@ -580,8 +595,10 @@ class BTCursor(object):
         self._btfile.prioritize(n)
         while not self._btfile.has_offset(n):
             self._wait_for_piece=self._btfile.piece_no(n)
+            logger.debug('Seek - waiting for ofs: %d, piece:%d', n, self._wait_for_piece)
             self._wait_event.clear()
             self._wait_event.wait()
+        logger.debug('File seek to %d', n)
         self._file.seek(n)
         
     def __enter__(self):
@@ -629,6 +646,14 @@ class BTFile(object):
     def piece_no_abs(self, n):
         return self._pieces.piece_no(n) + self._pieces.first_piece_abs
     
+    @property    
+    def piece_size(self):
+        return self._pieces.piece_size
+    
+    @property
+    def pieces(self):
+        return self._pieces.pieces
+        
     @property
     def first_piece(self):
         return self._pieces.first_piece_abs
@@ -675,7 +700,7 @@ class BTFile(object):
                 
 state_str = ['queued', 'checking', 'downloading metadata', \
                     'downloading', 'finished', 'seeding', 'allocating', 'checking fastresume']    
-def print_status(s,**kwargs):
+def print_status(s,download_queue, ctx):
     color=''
     default='\033[39m'
     green='\033[32m'
@@ -690,21 +715,25 @@ def print_status(s,**kwargs):
     else:
         color=green
         
-    
+    status = state_str[s.state]
+    if s.state==3 and ctx['client'] and not ctx['client'].has_file_tail:
+        status="tailing"
     print '\r%.2f%% (of %.1fMB) (down: %s%.1f kB/s\033[39m(need %.1f) up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
         (s.progress * 100, s.total_wanted/1048576.0, 
          color, s.download_rate / 1000, s.desired_rate/1000.0 if s.desired_rate else 0.0,
          s.upload_rate / 1000, \
-        s.num_seeds, s.num_complete, s.num_peers, s.num_incomplete, state_str[s.state]),
+        s.num_seeds, s.num_complete, s.num_peers, s.num_incomplete, status),
     sys.stdout.write("\033[K")
     sys.stdout.flush()
 
 def debug_download_queue(s,download_queue,ctx):
+    if s.state!= 3:
+        return
     if ctx.has_key('file'):
         first=ctx['file'].first_piece
     else:
         first=0
-    q=filter(lambda x: x.piece_index+first,download_queue)
+    q=map(lambda x: x['piece_index']+first,download_queue)
     logger.debug('Download queue: %s', q)
     
 def print_file(f):
@@ -719,11 +748,21 @@ def main(args=None):
     p.add_argument("--port", type=int, default=5001,help="Port for http server")
     p.add_argument("--debug-log", default='',help="File for debug logging")
     p.add_argument("--stdin", action='store_true', help='sends video to player via stdin (no seek then)')
+    p.add_argument("--print-pieces", action="store_true", help="Prints map of downloaded pieces and ends (X is downloaded piece, O is not downloaded)")
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)
         h=logging.handlers.RotatingFileHandler(args.debug_log)
         logger.addHandler(h)
+    if args.print_pieces:
+        print_pieces(args) 
+    else:   
+        stream(args)
+
+
+
+        
+def stream(args):
     c= BTClient(args.directory, start_stream_limit=args.minimum/ 100.0)
     c.add_listener(print_status)
     if args.debug_log:
@@ -755,7 +794,7 @@ def main(args=None):
     c.on_file_ready(start_play)
     logger.debug('Starting torrent client')
     c.start_torrent(args.torrent)
-    while not c.is_file_ready():
+    while not c.is_file_ready:
         time.sleep(1)
     
     time.sleep(0.5) # give time for player to start
@@ -783,6 +822,43 @@ def main(args=None):
         sys.stderr.write(msg)
         logger.error(msg)
     logger.debug("Player output:\n %s", player.log)
+    
+
+def pieces_map(pieces, w):
+    idx=0
+    sz= len(pieces)
+    w(" "*4)
+    for i in xrange(10): 
+        w("%d "%i)
+    w('\n')
+    while idx < sz:
+        w("%3d "%(idx/10))
+        for _c in xrange(min(10, sz-idx)):
+            if pieces[idx]:
+                w('X ')
+            else:
+                w('O ')
+            idx+=1
+        w('\n')
+
+def print_pieces(args):
+    def w(x):
+        sys.stdout.write(x)
+    c= BTClient(args.directory, start_stream_limit=args.minimum/ 100.0)
+    c.start_torrent(args.torrent)
+    #c.add_listener(print_status)
+    start = time.time()
+    while time.time()-start<60:
+        if c.file:
+            print "Pieces (each %.0f k) for file: %s" % (c.file.piece_size / 1024.0, c.file.path)
+            pieces=c.file.pieces
+            pieces_map(pieces,w)
+            return
+        time.sleep(1)
+    print >>sys.stderr, "Cannot get metadata"
+        
+    
+    
     
 if __name__=='__main__':
     try:
