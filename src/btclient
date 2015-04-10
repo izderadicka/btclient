@@ -5,4 +5,4 @@ SCRIPT=`ls -l $0 | awk '{print $11}'`
 INST_DIR=`dirname $SCRIPT`
 fi
 
-gnome-terminal --geometry=120x3 --hide-menubar -t "BT Streamer" -x python $INST_DIR/btclient.py -d ~/Downloads/torrents  -p mplayer --http "$1" 
+gnome-terminal --geometry=120x3 --hide-menubar -t "BT Streamer" -x python $INST_DIR/btclient.py -d ~/Downloads/torrents  -p mplayer -s eng "$1" 

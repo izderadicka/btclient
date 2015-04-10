@@ -10,60 +10,74 @@ from threading import Timer, Thread
 import urllib2
 import time
 import StringIO
-test_file='dejavu/DejaVuSans.ttf'
-test_base='/usr/share/fonts/truetype/'
+import tempfile
 
+from test_file import Peer_Request
+import cProfile
+import pstats
+from time import sleep
+TEST_FILE_SIZE= 12111222
+piece_size=2048
 
+import logging
+logging.basicConfig(level=logging.DEBUG)
 
 class Test(unittest.TestCase):
 
 
     def setUp(self):
         
-        size = os.stat(os.path.join(test_base, test_file)).st_size
+        f=tempfile.NamedTemporaryFile(delete=False)
+        s=os.urandom(TEST_FILE_SIZE)
+        f.write(s)
+        self.fname= f.name
+        f.close()
+        
+        size=os.stat(self.fname).st_size
+        
+        
+        fmap=Peer_Request(0, 2000)
+        pieces=[False] * (2+ TEST_FILE_SIZE / piece_size)
         self.tf_size=size
-        self.file=BTFile(test_file, test_base, size, 1)
+        fname=os.path.split(self.fname)[1]
+        self.file=BTFile(fname, '/tmp',1,size, fmap, pieces, piece_size, lambda _: None)
         self.server= StreamServer(('127.0.0.1', 5001), BTFileHandler, self.file)
         self.t=Thread(target=self.server.handle_request)
         self.t.start()
         
-    def update_file(self,n=16384):
-            size=min(self.file.done+n, self.file.size)
-            self.file.update_done(size)
-            if size< self.file.size:
-                t=Timer(0.005, self.update_file, args=[n])
-                t.daemon=True
-                t.start()
+    def update_file(self):
+        def update():
+            for n in xrange(1,2+ TEST_FILE_SIZE / piece_size+1):
+                pieces=[True] * n + [False] * (2+ TEST_FILE_SIZE / piece_size -n)
+                self.file.update_pieces(pieces)
+                sleep(0.001)
+                
+        t=Thread(target=update)
+        t.setDaemon(True)
+        t.start()
         
         
 
 
     def tearDown(self):
         self.server.stop()
-        self.file.close()
+        os.remove(self.fname) 
         time.sleep(0.1)
         
 
 
     def notest_get_all(self):
-        #self.update_file(16)
-        self.file.update_done(self.tf_size)
+        self.update_file()
+        
         r=urllib2.urlopen('http://localhost:5001/'+self.file.path)
         res=r.read()
         
         self.assertEqual(len(res),self.tf_size)
         
         
-    def notest_get_gradually(self):
-        self.update_file(16384)
-        #self.file.update_done(self.tf_size)
-        r=urllib2.urlopen('http://localhost:5001/'+self.file.path)
-        res=r.read()
-        
-        self.assertEqual(len(res),self.tf_size)
         
     def test_range(self):
-        self.update_file(16384)
+        self.update_file()
         req=urllib2.Request('http://localhost:5001/'+self.file.path, 
                             headers={'Range': 'bytes=100000-'})
         res=urllib2.urlopen(req)
@@ -82,5 +96,17 @@ class Test(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    #import sys;sys.argv = ['', 'Test.testName']
-    unittest.main()
+    suite = unittest.TestLoader().loadTestsFromTestCase(Test)
+    def runtests():
+        unittest.TextTestRunner().run(suite)
+
+    s = cProfile.run('runtests()',filename='test_stream.statste')
+#     pr = cProfile.Profile()
+#     pr.enable()
+#     runtests()    
+#     pr.disable()
+#     s = StringIO.StringIO()
+#     sortby = 'cumulative'
+#     ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+#     ps.print_stats()
+#     print s.getvalue()
