@@ -9,6 +9,7 @@ import sys
 import os.path
 import gzip
 import StringIO
+import logging
 
 class Urllib2Transport(xmlrpclib.Transport):
     def __init__(self, opener=None, https=False, use_datetime=0):
@@ -57,9 +58,10 @@ class OpenSubtitles(object):
         
     def search(self, filename, filesize=None, limit=20):
         filename=os.path.split(filename)[1]
+        name=os.path.splitext(filename)[0]
         s={'sublanguageid':self._lang, 'tag':filename }
-        print s
-        res =self._proxy.SearchSubtitles(self._token,[s], {'limit':limit})
+        s2={'sublanguageid':self._lang, 'query':name }
+        res =self._proxy.SearchSubtitles(self._token,[s,s2], {'limit':limit})
         self._parse_status(res)
         data=res.get('data')
         
@@ -111,20 +113,39 @@ class OpenSubtitles(object):
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.logout()
-        
-if __name__=='__main__':
-    import pprint
-    if len(sys.argv)<2:
-        print >>sys.stderr, "Enter video file as program argument"
-        sys.exit(1)
-    query=sys.argv[1]
+ 
+def down(query, lang):
     if OpenSubtitles.has_subtitles_downloaded(query):
         print 'subs are already there'
     else:
-        with OpenSubtitles('eng') as opensub:
+        with OpenSubtitles(lang) as opensub:
             res=  opensub.download(query)
             if res:
                 print 'subtitles downloaded'
             else:
                 print 'no subs found'
-        
+         
+def list_subs(f, lang):  
+    import pprint
+    with OpenSubtitles(lang) as opensub:
+        res=opensub.search(f)
+        res=map(lambda x: {'SubFileName':x['SubFileName'], 
+                           'SubDownloadsCnt':x['SubDownloadsCnt'],
+                           'QueryNumber':x['QueryNumber']},
+                res)
+        pprint.pprint(res)
+         
+if __name__=='__main__':
+    
+    from argparse import ArgumentParser
+    p=ArgumentParser()
+    p.add_argument("video_file", help="video file")
+    p.add_argument("-d", "--download", action="store_true", help="Download subtitles for video files")
+    p.add_argument("-l", "--list", action="store_true", help="List available subtitles")
+    p.add_argument("--lang", default='eng', help="Language")
+    args=p.parse_args()
+    if args.download:
+        down(args.video_file, args.lang)
+    else:
+        list_subs(args.video_file, args.lang)
+    

@@ -14,10 +14,10 @@ from threading import Timer
 TEST_FILE_SIZE=15*1024+300
 
 class Peer_Request(object):
-    def __init__(self, piece, start, length):
+    def __init__(self, piece, start):
         self.piece=piece
         self.start=start
-        self.length=length
+        
 
 class Test(unittest.TestCase):
 
@@ -36,10 +36,10 @@ class Test(unittest.TestCase):
         size=os.stat(self.fname).st_size
         ref= open(self.fname).read()
         self.assertEqual(TEST_FILE_SIZE, size)
-        fmap=Peer_Request(1, 700, size)
+        fmap=Peer_Request(1, 700)
         piece_size=1024
         pieces=[False]+16*[True]
-        bt = BTFile(self.fname, './',1,fmap, pieces, piece_size, lambda _: None)
+        bt = BTFile(self.fname, './',1, size, fmap, pieces, piece_size, lambda _: None)
         buf=StringIO()
         c=bt.create_cursor()
         while True:
@@ -56,11 +56,11 @@ class Test(unittest.TestCase):
     def test_seek_0(self):
         size=os.stat(self.fname).st_size
         ref= open(self.fname).read()
-        self.assertEqual(TEST_FILE_SIZE, size)
-        fmap=Peer_Request(1, 700, size)
+        self.assertEqual(TEST_FILE_SIZE,size)
+        fmap=Peer_Request(1, 700)
         piece_size=1024
         pieces=[False]+16*[True]
-        bt = BTFile(self.fname, './',1,fmap, pieces, piece_size, lambda _: None)
+        bt = BTFile(self.fname, './',1, size, fmap, pieces, piece_size, lambda _: None)
         buf=StringIO()
         c=bt.create_cursor()
         
@@ -78,10 +78,10 @@ class Test(unittest.TestCase):
         size=os.stat(self.fname).st_size
         ref= open(self.fname).read()
         self.assertEqual(TEST_FILE_SIZE, size)
-        fmap=Peer_Request(1, 700, size)
+        fmap=Peer_Request(1, 700)
         piece_size=1024
         pieces=[False]+1*[True]+15*[False]
-        bt = BTFile(self.fname, './',1,fmap, pieces, piece_size, lambda _: None)
+        bt = BTFile(self.fname, './',1, size, fmap,pieces, piece_size, lambda _: None)
         buf=StringIO()
         c=bt.create_cursor()
         
@@ -111,10 +111,10 @@ class Test(unittest.TestCase):
         f.close()
         self.assertEqual(TEST_FILE_SIZE, size)
         
-        fmap=Peer_Request(1, 700, size)
+        fmap=Peer_Request(1, 700)
         piece_size=1024
         pieces=[False]+1*[True]+15*[False]
-        bt = BTFile(self.fname, './',1,fmap, pieces, piece_size, lambda _: None)
+        bt = BTFile(self.fname, './',1,size,fmap, pieces, piece_size, lambda _: None)
         buf=StringIO()
         c=bt.create_cursor()
         

@@ -8,20 +8,20 @@ import libtorrent as lt
 from btclient import BTPieces
 
 class Peer_Request(object):
-    def __init__(self, piece, start, length):
+    def __init__(self, piece, start):
         self.piece=piece
         self.start=start
-        self.length=length
+        
         
 class Test(unittest.TestCase):
 
     def test_create(self):
         size=10*1024
-        fmap=Peer_Request(0, 512, size )
+        fmap=Peer_Request(0, 512 )
         
         piece_size=1024
         
-        p=BTPieces(fmap, [False]*11, piece_size)
+        p=BTPieces(fmap, size, [False]*11, piece_size)
         self.assertEqual(11, len(p._pieces))
         self.assertEqual(10, p._last_piece)
         
@@ -42,11 +42,11 @@ class Test(unittest.TestCase):
         
     def test_ready(self):
         size=10*1024
-        fmap=Peer_Request(0, 512, size )
+        fmap=Peer_Request(0, 512 )
         
         piece_size=1024
         
-        p=BTPieces(fmap, [False]*11, piece_size)
+        p=BTPieces(fmap, size, [False]*11, piece_size)
         
         self.assertEqual((0,0), p.can_read(0,1))
         self.assertFalse(p.has_offset(0))

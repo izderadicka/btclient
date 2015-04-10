@@ -36,11 +36,11 @@ class Test(unittest.TestCase):
         size=os.stat(self.fname).st_size
         
         
-        fmap=Peer_Request(0, 2000, size)
+        fmap=Peer_Request(0, 2000)
         pieces=[False] * (2+ TEST_FILE_SIZE / piece_size)
         self.tf_size=size
         fname=os.path.split(self.fname)[1]
-        self.file=BTFile(fname, '/tmp',1,fmap, pieces, piece_size, lambda _: None)
+        self.file=BTFile(fname, '/tmp',1,size, fmap, pieces, piece_size, lambda _: None)
         self.server= StreamServer(('127.0.0.1', 5001), BTFileHandler, self.file)
         self.t=Thread(target=self.server.handle_request)
         self.t.start()

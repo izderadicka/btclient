@@ -25,6 +25,8 @@ import socket
 import pprint
 import collections
 from math import floor
+from opensubtitle import OpenSubtitles
+import pickle
 
 
 hachoir_config.quiet = True
@@ -177,13 +179,19 @@ class BTClient(object):
     def __init__(self, path_to_store, 
                  port_min= 6881, 
                  port_max=6891,
-                 start_stream_limit=0.02):
+                 start_stream_limit=0.02,
+                 state_file="~/.btclient_state"):
         self._base_path=path_to_store
         self._torrent_params={'save_path':path_to_store,
                               'storage_mode':lt.storage_mode_t.storage_mode_sparse
                               }
         self._start_stream_limit=start_stream_limit
+        self._state_file=os.path.expanduser(state_file)
         self._ses=lt.session()
+        if os.path.exists(self._state_file):
+            with open(self._state_file) as f:
+                state=pickle.load(f)
+                self._ses.load_state(state)
         self._ses.listen_on(port_min, port_max)
         self._start_services()
         self._th=None
@@ -246,25 +254,39 @@ class BTClient(object):
     def _meta_ready(self, meta):
         f=self._choose_file(meta.files())
         if os.path.exists(os.path.join(self._base_path, f.path)): #TODO:may now it's not needed that file physically exists
-            fmap=meta.map_file(f.index, 0, f.size)
+            fmap=meta.map_file(f.index, 0, 1)
             pieces=self._th.status().pieces
-            self._file=BTFile(f.path, self._base_path, f.index,fmap, pieces, meta.piece_length(),
+            self._file=BTFile(f.path, self._base_path, f.index, f.size, fmap, pieces, meta.piece_length(),
                               self.prioritize)
             self._monitor.add_to_ctx('file', self._file)
             # video player usually checks tail of file - last few ks - so get them first
             self.prioritize(self._file.size - FILE_TAIL)
-        logger.debug('File %s pieces (pc=%d, ofs=%d, sz=%d), total_pieces=%d, pc_length=%d', 
+            logger.debug('File %s pieces (pc=%d, ofs=%d, sz=%d), total_pieces=%d, pc_length=%d', 
                      f.path,fmap.piece, fmap.start, fmap.length, 
                      meta.num_pieces(), meta.piece_length() )
         
     def prioritize(self,offset, size=None):
+        
         first_piece=self._file.piece_no_abs(offset)
         last_piece=None
         if size:
             last_piece=self._file.piece_no_abs(offset+size)
         meta=self._th.get_torrent_info()
-        priorities=[0 if i < first_piece or (last_piece is not None and i>last_piece) 
-                    else (7 if i==first_piece else 1) for i in xrange(meta.num_pieces())]
+        piece_duration=1000
+        priorities=[0 for i in xrange(meta.num_pieces())]
+        for i in xrange(meta.num_pieces()):
+            if i <first_piece or  (last_piece is not None and i>last_piece) :
+                self._th.reset_piece_deadline(i)
+            elif i==first_piece:
+                priorities[i]=7
+                self._th.set_piece_deadline(i,1)
+            else:
+                priorities[i]=1
+#                 if i-first_piece <=5:
+#                     dl=(i-first_piece)*piece_duration+1
+#                     self._th.set_piece_deadline(i, dl)
+#                 else:
+                self._th.reset_piece_deadline(i)
         
         self._th.prioritize_pieces(priorities)
         
@@ -280,7 +302,7 @@ class BTClient(object):
         if self._th:
             raise Exception('Torrent is already started')
         
-        if uri.startswith('http://' or uri.startswith('https://')):
+        if uri.startswith('http://') or uri.startswith('https://'):
             tp={'url':uri}
         elif uri.startswith('magnet:'):
             tp={'url':uri}
@@ -288,7 +310,7 @@ class BTClient(object):
             info = lt.torrent_info(uri)
             tp={'ti':info}
         else:
-            raise ValueError("Invalid torrent")
+            raise ValueError("Invalid torrent %s" %uri)
         
         tp.update(self._torrent_params)
         self._th = self._ses.add_torrent(tp)
@@ -315,6 +337,12 @@ class BTClient(object):
         self._ses.stop_upnp()
         self._ses.stop_lsd()
         self._ses.stop_dht()
+        
+    def save_state(self):
+        state=self._ses.save_state()
+        with open(self._state_file, 'wb') as f:
+            pickle.dump(state,f)
+        #pprint.pprint(state)
     
     
     class Monitor(Thread): 
@@ -406,9 +434,11 @@ class Player(object):
         player_name=os.path.split(player)[1]
         if player_name =='mplayer':
             self._player_options=[]#'--nocache']#'--cache=8192', '--cache-min=50']
+        self._player_name=player_name
+        self._started=Event()
         
         
-    def start(self, f, base, stdin):
+    def start(self, f, base, stdin, sub_lang=None):
         null_dev= open(os.devnull, 'w')
         env=os.environ.copy()
         #assure not using proxy
@@ -416,6 +446,11 @@ class Player(object):
         env.pop('HTTP_PROXY', '')
         params=[self._player,]
         params.extend(self._player_options)
+        if sub_lang:
+            try:
+                params.extend(self.load_subs(f.full_path, sub_lang))
+            except Exception,e:
+                logger.exception('Cannot load subtitles, error: %s',e)
         if stdin:
             params.append('-')
             sin=subprocess.PIPE
@@ -429,8 +464,24 @@ class Player(object):
                                     env=env, 
                                     stdin=sin)
         self._log = Player.Log(self._proc)
+        self._started.set()
     
-    
+    def load_subs(self, filename, lang):
+        logger.debug('Downloading %s subs for %s', lang, filename)
+        with OpenSubtitles(lang) as opensub:
+            res=  opensub.download(filename)
+            if res:
+                logger.debug('Loadeded subs')
+                if self._player_name=='mplayer':
+                    return ['-sub', res]
+                elif self._player_name=='vlc':
+                    return ['--sub-file=%s'%res]
+                else:
+                    logger.error('Unknown player %s, cannot add subs', self._player_name)
+            else:
+                logger.debug('No subs found')
+                return []
+        
     def write(self, data):
         self._proc.stdin.write(data)
         
@@ -439,8 +490,7 @@ class Player(object):
             self._proc.stdin.close()
         
     def is_playing(self):
-        if not self._proc:
-            return False
+        self._started.wait()
         self._proc.poll()
         return self._proc.returncode is None
     
@@ -457,10 +507,10 @@ class Player(object):
         
         
 class BTPieces(object):
-    def __init__(self, fmap, pieces, piece_size): 
+    def __init__(self, fmap, size, pieces, piece_size): 
         self._first_piece=fmap.piece
         self._offset= fmap.start
-        self._size=fmap.length
+        self._size=size
         self._piece_size=piece_size
         self._last_piece=self.piece_no(self._size-1)
         self.update_progress(pieces)
@@ -609,17 +659,20 @@ class BTCursor(object):
     
               
 class BTFile(object):     
-    def __init__(self, path, base, index, fmap, pieces, piece_size, prioritize_fn):
+    def __init__(self, path, base, index, size, fmap, pieces, piece_size, prioritize_fn):
         self._base=base
         self.path=path
-        self.size=fmap.length
+        self.size=size
         self.index=index
-        self._pieces=BTPieces(fmap, pieces, piece_size)
+        self._pieces=BTPieces(fmap, size, pieces, piece_size)
         self._full_path= os.path.join(base,path)
         self._cursors=[]
         self._prioritize_fn=prioritize_fn
         
         self._lock=Lock()
+        self._duration=None
+        self._rate=None
+        self._piece_duration=None
     
     def add_cursor(self,c):
         with self._lock:
@@ -668,13 +721,25 @@ class BTFile(object):
         
     @property    
     def duration(self):
-        return get_duration(self._full_path)
+        if not self._duration:
+            self._duration= get_duration(self._full_path)
+        return self._duration
+    
+    @property
+    def piece_duration_ms(self):
+        if not self._piece_duration:
+            if self.byte_rate:
+                self._piece_duration=self._pieces.piece_size/ self.byte_rate / 1000
+                
+        return self._piece_duration
     
     @property    
     def byte_rate(self):
-        d=self.duration
-        if d:
-            return self.size / d.total_seconds()
+        if not self._rate:
+            d=self.duration
+            if d:
+                self._rate= self.size / d.total_seconds()
+        return self._rate
     
     def update_pieces(self,pieces):
         self._pieces.update_progress(pieces)
@@ -739,6 +804,16 @@ def debug_download_queue(s,download_queue,ctx):
 def print_file(f):
     print '\nFile %s (%.1fkB) is ready' %(f.path, f.size/1000.0)
     
+class LangAction(argparse.Action):
+    def __init__(self, option_strings, dest, nargs=None, **kwargs):
+        if nargs is not None:
+            raise ValueError("nargs not allowed")
+        super(LangAction, self).__init__(option_strings, dest, **kwargs)
+    def __call__(self, parser, namespace, values, option_string=None):
+        if len(values)!=3:
+            raise ValueError('subtitles language should be 3 letters code')
+        setattr(namespace, self.dest, values)
+    
 def main(args=None):
     p=argparse.ArgumentParser()
     p.add_argument("torrent", help="Torrent file, link to file or magnet link")
@@ -749,6 +824,7 @@ def main(args=None):
     p.add_argument("--debug-log", default='',help="File for debug logging")
     p.add_argument("--stdin", action='store_true', help='sends video to player via stdin (no seek then)')
     p.add_argument("--print-pieces", action="store_true", help="Prints map of downloaded pieces and ends (X is downloaded piece, O is not downloaded)")
+    p.add_argument("-s", "--subtitles", action=LangAction, help="language for subtitle 3 letter code eng,cze ... (will try to get subtitles from opensubtitles.org)")
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)
@@ -764,64 +840,67 @@ def main(args=None):
         
 def stream(args):
     c= BTClient(args.directory, start_stream_limit=args.minimum/ 100.0)
-    c.add_listener(print_status)
-    if args.debug_log:
-        c.add_listener(debug_download_queue)
-    player=find_executable(args.player)
-    if not player:
-        print >>sys.stderr, "Cannot find player %s on path"%args.player
-    player=Player(player)
-    
-    server=None
-    if not args.stdin:
-        server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=True)
-        logger.debug('Started http server on port %d', args.port)
-    def start_play(f, finished):
-        base=None
-        if not args.stdin:
-            server.set_file(f)
-            server.run()
-            base='http://127.0.0.1:'+ str(args.port)+'/'
-        sin=args.stdin
-        if finished:
-            base=args.directory
-            sin=False
-            logger.debug('File is already downloaded, will play it directly')
-            args.play_file=True
-        player.start(f,base, stdin=sin)
-        logger.debug('Started media player for %s', f)
+    try:
+        c.add_listener(print_status)
+        if args.debug_log:
+            c.add_listener(debug_download_queue)
+        player=find_executable(args.player)
+        if not player:
+            print >>sys.stderr, "Cannot find player %s on path"%args.player
+        player=Player(player)
         
-    c.on_file_ready(start_play)
-    logger.debug('Starting torrent client')
-    c.start_torrent(args.torrent)
-    while not c.is_file_ready:
-        time.sleep(1)
-    
-    time.sleep(0.5) # give time for player to start
-    with c.file.create_cursor() as f:
-        while True:
-            if not player.is_playing():
-                break
-            if not args.stdin or hasattr(args, 'play_file') and args.play_file:
-                time.sleep(1)
-            else:
-                    buf=f.read(1024)
-                    if buf:
-                        try:
-                            player.write(buf)
-                            logger.debug("written to stdin")
-                        except IOError:
-                            pass
-                    else:
-                        player.close()
-    logger.debug('Play ended')       
-    if server:
-        server.stop()    
-    if player.rcode != 0:
-        msg='Player ended with error %d\n' % (player.rcode or 0)
-        sys.stderr.write(msg)
-        logger.error(msg)
-    logger.debug("Player output:\n %s", player.log)
+        server=None
+        if not args.stdin:
+            server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=True)
+            logger.debug('Started http server on port %d', args.port)
+        def start_play(f, finished):
+            base=None
+            if not args.stdin:
+                server.set_file(f)
+                server.run()
+                base='http://127.0.0.1:'+ str(args.port)+'/'
+            sin=args.stdin
+            if finished:
+                base=args.directory
+                sin=False
+                logger.debug('File is already downloaded, will play it directly')
+                args.play_file=True
+            player.start(f,base, stdin=sin,sub_lang=args.subtitles)
+            logger.debug('Started media player for %s', f)
+            
+        c.on_file_ready(start_play)
+        logger.debug('Starting torrent client')
+        c.start_torrent(args.torrent)
+        while not c.is_file_ready:
+            time.sleep(1)
+        
+        #time.sleep(10) # give time for player to start
+        with c.file.create_cursor() as f:
+            while True:
+                if not player.is_playing():
+                    break
+                if not args.stdin or hasattr(args, 'play_file') and args.play_file:
+                    time.sleep(1)
+                else:
+                        buf=f.read(1024)
+                        if buf:
+                            try:
+                                player.write(buf)
+                                logger.debug("written to stdin")
+                            except IOError:
+                                pass
+                        else:
+                            player.close()
+        logger.debug('Play ended')       
+        if server:
+            server.stop()    
+        if player.rcode != 0:
+            msg='Player ended with error %d\n' % (player.rcode or 0)
+            sys.stderr.write(msg)
+            logger.error(msg)
+        logger.debug("Player output:\n %s", player.log)
+    finally:
+        c.save_state()
     
 
 def pieces_map(pieces, w):
