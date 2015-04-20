@@ -27,6 +27,7 @@ import collections
 from math import floor
 from opensubtitle import OpenSubtitles
 import pickle
+from collections import namedtuple
 
 
 hachoir_config.quiet = True
@@ -154,8 +155,8 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
         else:
             self.send_response(200, 'OK')
         self.send_header('Content-Type', cont_type)
-        #self.send_header('transferMode.dlna.org', 'Streaming')
-        #self.send_header('contentFeatures.dlna.org', 'DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000')
+        self.send_header('transferMode.dlna.org', 'Streaming')
+        self.send_header('contentFeatures.dlna.org', 'DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000')
         if self.server.allow_range:
             self.send_header('Accept-Ranges', 'bytes')
         else:
@@ -174,6 +175,44 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # @ReservedAssignment
         logger.debug(format, *args)
      
+class BaseMonitor(Thread): 
+    def __init__(self, client, name):
+        Thread.__init__(self,name=name)
+        self.daemon=True
+        self._th=None
+        self._listeners=[]
+        self._lock = Lock()
+        self._wait_event= Event()
+        self._running=True
+        self._start=self.start
+        self.start=None
+        self._ctx={'client':client}
+        self._ses=None
+       
+    def add_to_ctx(self,key,val):
+        self._ctx[key]=val   
+         
+    def do_start(self, th, ses): 
+        self._th = th
+        self._ses=ses
+        self._start()
+        
+    def stop(self):
+        self._running=False
+        self._wait_event.set()
+        
+    def add_listener(self, cb):
+        with self._lock:
+            if not cb in self._listeners:
+                self._listeners.append(cb)
+            
+    def remove_listener(self,cb):
+        with self._lock:
+            try:
+                self._listeners.remove(cb)
+            except ValueError:
+                pass
+            
 
 class BTClient(object):
     def __init__(self, path_to_store, 
@@ -192,11 +231,13 @@ class BTClient(object):
             with open(self._state_file) as f:
                 state=pickle.load(f)
                 self._ses.load_state(state)
+        #self._ses.set_alert_mask(lt.alert.category_t.progress_notification|lt.alert.category_t.status_notification)
         self._ses.listen_on(port_min, port_max)
         self._start_services()
         self._th=None
         self._monitor= BTClient.Monitor(self)
         self._monitor.add_listener(self._check_ready)
+        self._dispatcher=BTClient.Dispatcher(self)
         self._ready=False
         self._file = None
         self._has_tail=False
@@ -221,9 +262,10 @@ class BTClient(object):
         if s.state>=3 and  s.state <= 5 and not self._file and s.progress>0:
             self._meta_ready(self._th.get_torrent_info())
             logger.debug('Got torrent metadata and start download')
-        elif not self._has_tail and self._file and self._file.can_read(self._file.size-1,1):
+        elif not self._has_tail and self._file \
+            and self._file.can_read(self._file.size-FILE_TAIL,FILE_TAIL)[0]==FILE_TAIL:
             self._has_tail=True
-            self.prioritize(0)
+            self._file.prioritize(0)
             logger.debug('Got file %s tail', self._file.path)
         elif self._has_tail and self._file and not self._ready:
             progress=float(s.total_wanted_done)/s.total_wanted
@@ -236,9 +278,8 @@ class BTClient(object):
                 self._ready=True
                 if self._on_ready:
                     self._on_ready(self._file, done)
+                    
         if self._file and s.state>=3:
-#             idx=self._file.index
-#             prog=self._th.file_progress()[idx]
             self._file.update_pieces(s.pieces)
             
             
@@ -252,7 +293,9 @@ class BTClient(object):
         return f
             
     def _meta_ready(self, meta):
-        f=self._choose_file(meta.files())
+        fs=meta.files()
+        files=fs if isinstance(fs, list) else [fs.at(i) for i in xrange(fs.num_files())]
+        f=self._choose_file(files)
         if os.path.exists(os.path.join(self._base_path, f.path)): #TODO:may now it's not needed that file physically exists
             fmap=meta.map_file(f.index, 0, 1)
             pieces=self._th.status().pieces
@@ -260,43 +303,48 @@ class BTClient(object):
                               self.prioritize)
             self._monitor.add_to_ctx('file', self._file)
             # video player usually checks tail of file - last few ks - so get them first
-            self.prioritize(self._file.size - FILE_TAIL)
+            self._file.prioritize(self._file.size - FILE_TAIL)
             logger.debug('File %s pieces (pc=%d, ofs=%d, sz=%d), total_pieces=%d, pc_length=%d', 
                      f.path,fmap.piece, fmap.start, fmap.length, 
                      meta.num_pieces(), meta.piece_length() )
         
-    def prioritize(self,offset, size=None):
+    def prioritize(self,first_piece, last_piece):
         
-        first_piece=self._file.piece_no_abs(offset)
-        last_piece=None
-        if size:
-            last_piece=self._file.piece_no_abs(offset+size)
         meta=self._th.get_torrent_info()
         piece_duration=1000
+        min_deadline=2000
         priorities=[0 for i in xrange(meta.num_pieces())]
         for i in xrange(meta.num_pieces()):
             if i <first_piece or  (last_piece is not None and i>last_piece) :
                 self._th.reset_piece_deadline(i)
             elif i==first_piece:
                 priorities[i]=7
-                self._th.set_piece_deadline(i,1)
+                self._th.set_piece_deadline(i,min_deadline, lt.deadline_flags.alert_when_available)
+                logger.debug("Set deadline %d for piece %d", min_deadline,i)
             else:
                 priorities[i]=1
-#                 if i-first_piece <=5:
-#                     dl=(i-first_piece)*piece_duration+1
-#                     self._th.set_piece_deadline(i, dl)
-#                 else:
-                self._th.reset_piece_deadline(i)
+                if i-first_piece <=5:
+                    dl=(i-first_piece)*piece_duration+min_deadline
+                    self._th.set_piece_deadline(i, dl,lt.deadline_flags.alert_when_available)
+                    logger.debug("Set deadline %d for piece %d", dl,i)
+                else:
+                    self._th.reset_piece_deadline(i)
         
         self._th.prioritize_pieces(priorities)
         
         
             
-    def add_listener(self, cb):
+    def add_monitor_listener(self, cb):
         self._monitor.add_listener(cb)
             
-    def remove_listener(self,cb):
+    def remove_monitor_listener(self,cb):
         self._monitor.remove_listener(cb)
+        
+    def add_dispatcher_listener(self, cb):
+        self._dispatcher.add_listener(cb)
+            
+    def remove_dispacher_listener(self,cb):
+        self._dispatcher.remove_listener(cb)
         
     def start_torrent(self, uri):
         if self._th:
@@ -318,7 +366,8 @@ class BTClient(object):
 #         if tp.has_key('ti'):
 #             self._meta_ready(self._th.get_torrent_info())
         
-        self._monitor.monitor(self._th)
+        self._monitor.do_start(self._th, self._ses)
+        self._dispatcher.do_start(self._th, self._ses)
         
     def stop(self):
         self._monitor.stop()
@@ -344,47 +393,32 @@ class BTClient(object):
             pickle.dump(state,f)
         #pprint.pprint(state)
     
-    
-    class Monitor(Thread): 
+    class Dispatcher(BaseMonitor):
         def __init__(self, client):
-            Thread.__init__(self,name="Torrent Status Monitor")
-            self.daemon=True
-            self._th=None
-            self._listeners=[]
-            self._lock = Lock()
-            self._wait_event= Event()
-            self._running=True
-            self._start=self.start
-            self.start=None
-            self._rate=None
-            self._ctx={'client':client}
+            super(BTClient.Dispatcher,self).__init__(client, name='Torrent Events Dispatcher')
             
-        def add_to_ctx(self,key,val):
-            self._ctx[key]=val   
+        def run(self):
+            if not self._ses:
+                raise Exception('Invalid state, session is not initialized') 
+    
+            while (self._running):
+                a=self._ses.wait_for_alert(1000)
+                if a:
+                    alerts= self._ses.pop_alerts()
+                    for alert in alerts:
+                        with self._lock:
+                            for cb in self._listeners:
+                                cb(lt.alert.what(alert), alert)
+                   
+                
+            
+    class Monitor(BaseMonitor): 
+        def __init__(self, client):
+            super(BTClient.Monitor,self).__init__(client, name="Torrent Status Monitor" )
+            self._rate=None
              
         def set_desired_rate(self, val):
             self._rate=val
-            
-        def monitor(self, th): 
-            self._th = th
-            self._start()
-            
-        def stop(self):
-            self._running=False
-            self._wait_event.set()
-            
-            
-        def add_listener(self, cb):
-            with self._lock:
-                if not cb in self._listeners:
-                    self._listeners.append(cb)
-                
-        def remove_listener(self,cb):
-            with self._lock:
-                try:
-                    self._listeners.remove(cb)
-                except ValueError:
-                    pass
                 
         def run(self):
             if not self._th:
@@ -602,7 +636,39 @@ class BTPieces(object):
     
     def __len__(self):
         return self._pieces.__len__()
+    
+
+Piece=namedtuple('Piece', ['index', 'data'])
+    
+class PieceCache(object):
+    size=5
+    def __init__(self, btfile):   
+        self._btfile=btfile
+        self._cache=collections.deque(max_size=PieceCache.size)
+        self._pos=0
+        self._
+    
+    
+    
+    
+    def _get_piece(self, offset):
+        pc_no=self._btfile.piece_no(offset)    
+        while len(self._cache):
+            pc=self._cache.popleft()
+            if pc.no==pc_no:
+                return pc
+            #TBD
         
+    def get(self, offset, size):
+        pass
+    
+    def add(self, piece):
+        pass
+    
+    @property
+    def require(self):
+        pass
+             
 class BTCursor(object):  
     def __init__(self, btfile):  
         self._btfile=btfile
@@ -627,6 +693,7 @@ class BTCursor(object):
                 return self._file.read(to_read)
             self._wait_for_piece=wait_for_piece
             logger.debug('Read - waiting for ofs: %d, piece:%d', ofs, wait_for_piece)
+            self._btfile.prioritize(ofs)
             self._wait_event.clear()
             self._wait_event.wait()
         to_read=min(self._done - self._file.tell(), n)
@@ -750,8 +817,10 @@ class BTFile(object):
                 c.wake(test_cb)
                  
     def prioritize(self, offset): 
-        logger.debug("Prioritizing offset %d - ",offset)      
-        self._prioritize_fn(offset)
+        first_piece=self.piece_no_abs(offset)
+        last_piece=self.piece_no_abs(self.size-1)
+        logger.debug("Prioritizing offset %d - (pcs %d-%d)",offset, first_piece, last_piece)      
+        self._prioritize_fn(first_piece, last_piece)
         
     def remove(self):
         os.unlink(self._full_path)
@@ -801,6 +870,9 @@ def debug_download_queue(s,download_queue,ctx):
     q=map(lambda x: x['piece_index']+first,download_queue)
     logger.debug('Download queue: %s', q)
     
+def debug_alerts(type, alert):
+    logger.debug("Alert %s - %s", type, alert)
+    
 def print_file(f):
     print '\nFile %s (%.1fkB) is ready' %(f.path, f.size/1000.0)
     
@@ -841,9 +913,10 @@ def main(args=None):
 def stream(args):
     c= BTClient(args.directory, start_stream_limit=args.minimum/ 100.0)
     try:
-        c.add_listener(print_status)
+        c.add_monitor_listener(print_status)
         if args.debug_log:
-            c.add_listener(debug_download_queue)
+            c.add_monitor_listener(debug_download_queue)
+            c.add_dispatcher_listener(debug_alerts)
         player=find_executable(args.player)
         if not player:
             print >>sys.stderr, "Cannot find player %s on path"%args.player
@@ -869,28 +942,32 @@ def stream(args):
             logger.debug('Started media player for %s', f)
             
         c.on_file_ready(start_play)
-        logger.debug('Starting torrent client')
+        logger.debug('Starting torrent client - libtorrent version %s', lt.version)
         c.start_torrent(args.torrent)
         while not c.is_file_ready:
             time.sleep(1)
-        
-        #time.sleep(10) # give time for player to start
-        with c.file.create_cursor() as f:
-            while True:
-                if not player.is_playing():
-                    break
-                if not args.stdin or hasattr(args, 'play_file') and args.play_file:
-                    time.sleep(1)
-                else:
-                        buf=f.read(1024)
-                        if buf:
-                            try:
-                                player.write(buf)
-                                logger.debug("written to stdin")
-                            except IOError:
-                                pass
-                        else:
-                            player.close()
+        if not args.stdin or hasattr(args, 'play_file') and args.play_file:
+            f=None
+        else:
+            f=c.file.create_cursor()
+            
+        while True:
+            if not player.is_playing():
+                break
+            if not f:
+                time.sleep(1)
+            else:
+                    buf=f.read(1024)
+                    if buf:
+                        try:
+                            player.write(buf)
+                            logger.debug("written to stdin")
+                        except IOError:
+                            pass
+                    else:
+                        player.close()
+        if f:
+            f.close()
         logger.debug('Play ended')       
         if server:
             server.stop()    
