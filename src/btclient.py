@@ -109,10 +109,12 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
         if self.do_HEAD(only_header=False):
             with self.server.file.create_cursor() as f: 
                 f.seek( self._offset)
-                if logger.level<= logging.DEBUG:
-                        logger.debug('Start sending data')
+                send_something=False
                 while True:
                     buf= f.read(1024) 
+                    if not send_something and logger.level<= logging.DEBUG:
+                        logger.debug('Start sending data')
+                        send_something=True
                     if buf:
                         self.wfile.write(buf)
                     else:
@@ -306,12 +308,23 @@ class BTClient(object):
         self._th.set_piece_deadline(pc, dl,lt.deadline_flags.alert_when_available)
         logger.debug("Set deadline %d for piece %d", dl,pc)
         
+        # we do not need to download pieces that are lower then current index, but last two pieces are special because players sometime look at end of file
+        if idx==0 and (self._file.last_piece - pc) > 2:
+            for i in xrange(pc-1):
+                self._th.piece_priority(i,0)
+                self._th.reset_piece_deadline(i)
+                
+        
     def prioritize_file(self):
         meta=self._th.get_torrent_info()
         priorities=[1 if i>= self._file.first_piece and i<= self.file.last_piece else 0 \
                     for i in xrange(meta.num_pieces())]       
         self._th.prioritize_pieces(priorities)
         
+    
+    @property
+    def pieces(self):
+        return self._th.status().pieces
             
     def add_monitor_listener(self, cb):
         self._monitor.add_listener(cb)
@@ -579,6 +592,7 @@ class PieceCache(object):
         while not self.has_piece(pc_no):
             self.fill_cache(pc_no)
             #self._event.clear()
+            logger.debug('Waiting for piece %d'%pc_no)
             self._event.wait(self.TIMEOUT)
             
     def _get_piece(self,n):
@@ -792,7 +806,7 @@ def main(args=None):
     p.add_argument("torrent", help="Torrent file, link to file or magnet link")
     p.add_argument("-d", "--directory", default="./", help="directory to save download files")
     p.add_argument("-p", "--player", default="mplayer", choices=["mplayer","vlc"], help="Video player")
-    p.add_argument("-m", "--minimum", default=2.0, type=float, help="Minimum %% of file to be downloaded to start player")
+    p.add_argument("-m", "--minimum", default=1.0, type=float, help="Minimum %% of file to be downloaded to start player")
     p.add_argument("--port", type=int, default=5001,help="Port for http server")
     p.add_argument("--debug-log", default='',help="File for debug logging")
     p.add_argument("--stdin", action='store_true', help='sends video to player via stdin (no seek then)')
@@ -908,7 +922,7 @@ def print_pieces(args):
     while time.time()-start<60:
         if c.file:
             print "Pieces (each %.0f k) for file: %s" % (c.file.piece_size / 1024.0, c.file.path)
-            pieces=c.file.pieces
+            pieces=c.pieces
             pieces_map(pieces,w)
             return
         time.sleep(1)
