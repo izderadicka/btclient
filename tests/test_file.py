@@ -8,8 +8,10 @@ from btclient import BTFile
 import os
 from StringIO import StringIO
 import tempfile
+import time
 test_file='test_file.py'
-from threading import Timer
+from threading import Thread
+from Queue import Queue
 
 TEST_FILE_SIZE=15*1024+300
 
@@ -17,6 +19,42 @@ class Peer_Request(object):
     def __init__(self, piece, start):
         self.piece=piece
         self.start=start
+        
+class DummyClient(Thread):
+    def __init__(self, f,delay=0):
+        Thread.__init__(self)
+        self.daemon=True
+        if hasattr(f, 'read'):
+            self.f=f
+        else:
+            self.f=open(f,'rb')
+        self.q=Queue()
+        self.delay=delay
+        self.piece_cache={}
+        
+    def serve(self, btfile):  
+        self.btfile=btfile  
+        self.start()
+        
+    def request(self,n,idx):
+        self.q.put((n,idx))
+        
+    def run(self):
+        while True:
+            pc,idx=self.q.get()
+            if self.piece_cache.has_key(pc):
+                data=self.piece_cache[pc]
+            else:
+                time.sleep(idx*self.delay)
+                self.f.seek(self.btfile.piece_size *pc)
+                data=self.f.read(self.btfile.piece_size)
+                self.piece_cache[pc]=data
+            self.btfile.update_piece(pc,data)
+            print "Send piece no %d" % pc
+            
+            
+        
+    
         
 
 class Test(unittest.TestCase):
@@ -30,110 +68,109 @@ class Test(unittest.TestCase):
         f.close()
 
     def tearDown(self):
-        os.remove(self.fname)        
+        os.remove(self.fname)   
         
-    def test_read(self):
-        size=os.stat(self.fname).st_size
-        ref= open(self.fname).read()
-        self.assertEqual(TEST_FILE_SIZE, size)
+        
+    def test_read_ofs(self, delay=0.001, piece_size=1024, read_block=2000):
+        ofs_start=1 * piece_size + 700+1
+        size=TEST_FILE_SIZE - ofs_start
         fmap=Peer_Request(1, 700)
-        piece_size=1024
-        pieces=[False]+16*[True]
-        bt = BTFile(self.fname, './',1, size, fmap, pieces, piece_size, lambda _: None)
+        
+        client=DummyClient(self.fname, delay)
+        bt = BTFile(self.fname, './',1, size, fmap, piece_size, client.request)
+        client.serve(bt)
         buf=StringIO()
         c=bt.create_cursor()
-        while True:
-            res=c.read(10)
-            if res:
-                buf.write(res)
-            else:
-                break
+        with open(self.fname, 'rb') as inf:
+            ofs=ofs_start
+            while True:
+                sz=read_block
+                res=c.read(sz)
+                inf.seek(ofs)
+                
+                if res:
+                    ch=inf.read(len(res))
+                    
+                    self.assertEqual(len(res), len(ch))
+                    self.assertEqual(res,ch, msg="Unequal ot ofs %d"%ofs)
+                    ofs+=len(ch)
+                    
+                    buf.write(res)
+                else:
+                    break
+        with open(self.fname, 'rb') as f:
+            f.seek(ofs_start)
+            ref=f.read(size)
+        self.assertEqual(len(ref), len(buf.getvalue()))
+        self.assertEqual(ref, buf.getvalue())
+        c.close()     
+        
+    def test_read(self, delay=0.001, piece_size=1024, read_block=2000):
+        size=TEST_FILE_SIZE 
+        fmap=Peer_Request(0, 0)
+        
+        client=DummyClient(self.fname, delay)
+        bt = BTFile(self.fname, './',1, size, fmap, piece_size, client.request)
+        client.serve(bt)
+        buf=StringIO()
+        c=bt.create_cursor()
+        with open(self.fname, 'rb') as inf:
+            ofs=0
+            while True:
+                sz=read_block
+                res=c.read(sz)
+                inf.seek(ofs)
+                
+                if res:
+                    ch=inf.read(len(res))
+                    
+                    self.assertEqual(len(res), len(ch))
+                    self.assertEqual(res,ch, msg="Unequal ot ofs %d"%ofs)
+                    ofs+=len(ch)
+                    
+                    buf.write(res)
+                else:
+                    break
+        with open(self.fname, 'rb') as f:
+            #f.seek(1 * piece_size + 700)
+            ref=f.read(size)
+        self.assertEqual(len(ref), len(buf.getvalue()))
         self.assertEqual(ref, buf.getvalue())
         c.close()
         
         
+    def test_read_nodelay(self):
+        self.test_read(0) 
         
-    def test_seek_0(self):
-        size=os.stat(self.fname).st_size
-        ref= open(self.fname).read()
-        self.assertEqual(TEST_FILE_SIZE,size)
-        fmap=Peer_Request(1, 700)
-        piece_size=1024
-        pieces=[False]+16*[True]
-        bt = BTFile(self.fname, './',1, size, fmap, pieces, piece_size, lambda _: None)
-        buf=StringIO()
-        c=bt.create_cursor()
-        
-        c.seek(0)
-        for i in range(2): 
-            res=c.read()
-            self.assertEqual(ref,res)
-            c.seek(0)
-            
-        c.close()
-        self.assertEqual(0, len(bt._cursors))
-         
-         
-    def test_read_blocked(self):
-        size=os.stat(self.fname).st_size
-        ref= open(self.fname).read()
-        self.assertEqual(TEST_FILE_SIZE, size)
-        fmap=Peer_Request(1, 700)
-        piece_size=1024
-        pieces=[False]+1*[True]+15*[False]
-        bt = BTFile(self.fname, './',1, size, fmap,pieces, piece_size, lambda _: None)
-        buf=StringIO()
-        c=bt.create_cursor()
-        
-        
-        def update(rd):
-            
-            bt.update_pieces([False]+ rd*[True]+ (16-rd)*[False])
-            if rd<=16:
-                Timer(0.05, update, args=(rd+1,)).start()
-         
-        Timer(0.1, update, args=(2,)).start()
-       
-        while True:
-            res=c.read(100)
-            if res:
-                buf.write(res)
-            else:
-                break
-        self.assertEqual(ref, buf.getvalue())
-        c.close()
+    def test_sizes(self):
+        self.test_read(delay=0, piece_size=1024, read_block=11)
+        self.test_read(delay=0, piece_size=233, read_block=3333)
          
     def test_seek(self):
-        size=os.stat(self.fname).st_size
-        f=open(self.fname)
-        f.seek(2000)
-        ref= f.read()
-        f.close()
-        self.assertEqual(TEST_FILE_SIZE, size)
+        size=TEST_FILE_SIZE 
+        fmap=Peer_Request(0, 0)
         
-        fmap=Peer_Request(1, 700)
-        piece_size=1024
-        pieces=[False]+1*[True]+15*[False]
-        bt = BTFile(self.fname, './',1,size,fmap, pieces, piece_size, lambda _: None)
+        client=DummyClient(self.fname)
+        bt = BTFile(self.fname, './',1, size, fmap, 512, client.request)
+        client.serve(bt)
         buf=StringIO()
         c=bt.create_cursor()
-        
-        def update(rd):
-            bt.update_pieces([False]+ rd*[True]+ (16-rd)*[False])
-            if rd<=16:
-                Timer(0.05, update, args=(rd+1,)).start()
-         
-        Timer(0.1, update, args=(2,)).start()
-        c.seek(2000)
+        c.seek(555)
         while True:
-            res=c.read(513)
+            sz=1024
+            res=c.read(sz)
             if res:
                 buf.write(res)
             else:
                 break
+        with open(self.fname, 'rb') as f:
+            f.seek(555)
+            ref=f.read(size)
+        self.assertEqual(len(ref), len(buf.getvalue()))
         self.assertEqual(ref, buf.getvalue())
         c.close()
-
+        
+        
 
 if __name__ == "__main__":
     #import sys;sys.argv = ['', 'Test.testName']

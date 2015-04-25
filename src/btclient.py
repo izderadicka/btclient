@@ -24,10 +24,8 @@ from distutils.spawn import find_executable
 import socket
 import pprint
 import collections
-from math import floor
 from opensubtitle import OpenSubtitles
 import pickle
-from collections import namedtuple
 
 
 hachoir_config.quiet = True
@@ -238,9 +236,10 @@ class BTClient(object):
         self._monitor= BTClient.Monitor(self)
         self._monitor.add_listener(self._check_ready)
         self._dispatcher=BTClient.Dispatcher(self)
+        self._dispatcher.add_listener(self._update_ready_pieces)
         self._ready=False
         self._file = None
-        self._has_tail=False
+        
     
     
     @property
@@ -254,20 +253,15 @@ class BTClient(object):
     def is_file_ready(self):
         return self._ready 
     
-    @property
-    def has_file_tail(self):
-        return self._has_tail
-        
+    def _update_ready_pieces(self, alert_type, alert):
+        if alert_type == 'read_piece_alert' and self._file:
+            self._file.update_piece(alert.piece, alert.buffer)
+    
     def _check_ready(self, s, **kwargs):
         if s.state>=3 and  s.state <= 5 and not self._file and s.progress>0:
             self._meta_ready(self._th.get_torrent_info())
             logger.debug('Got torrent metadata and start download')
-        elif not self._has_tail and self._file \
-            and self._file.can_read(self._file.size-FILE_TAIL,FILE_TAIL)[0]==FILE_TAIL:
-            self._has_tail=True
-            self._file.prioritize(0)
-            logger.debug('Got file %s tail', self._file.path)
-        elif self._has_tail and self._file and not self._ready:
+        elif self._file and not self._ready:
             progress=float(s.total_wanted_done)/s.total_wanted
             if progress >= self._start_stream_limit: #and self._file.done>= min(10000000,self._file.size):
                 done=progress>=1.0
@@ -279,9 +273,7 @@ class BTClient(object):
                 if self._on_ready:
                     self._on_ready(self._file, done)
                     
-        if self._file and s.state>=3:
-            self._file.update_pieces(s.pieces)
-            
+    
             
     def _choose_file(self, files, search=None):    
         videos=filter(lambda f: VIDEO_EXTS.has_key(os.path.splitext(f.path)[1]), files)
@@ -298,40 +290,27 @@ class BTClient(object):
         f=self._choose_file(files)
         if os.path.exists(os.path.join(self._base_path, f.path)): #TODO:may now it's not needed that file physically exists
             fmap=meta.map_file(f.index, 0, 1)
-            pieces=self._th.status().pieces
-            self._file=BTFile(f.path, self._base_path, f.index, f.size, fmap, pieces, meta.piece_length(),
-                              self.prioritize)
+            self._file=BTFile(f.path, self._base_path, f.index, f.size, fmap, meta.piece_length(),
+                              self.prioritize_piece)
             self._monitor.add_to_ctx('file', self._file)
-            # video player usually checks tail of file - last few ks - so get them first
-            self._file.prioritize(self._file.size - FILE_TAIL)
+            self.prioritize_file()
             logger.debug('File %s pieces (pc=%d, ofs=%d, sz=%d), total_pieces=%d, pc_length=%d', 
                      f.path,fmap.piece, fmap.start, fmap.length, 
                      meta.num_pieces(), meta.piece_length() )
         
-    def prioritize(self,first_piece, last_piece):
-        
-        meta=self._th.get_torrent_info()
+    
+    def prioritize_piece(self, pc, idx):
         piece_duration=1000
         min_deadline=2000
-        priorities=[0 for i in xrange(meta.num_pieces())]
-        for i in xrange(meta.num_pieces()):
-            if i <first_piece or  (last_piece is not None and i>last_piece) :
-                self._th.reset_piece_deadline(i)
-            elif i==first_piece:
-                priorities[i]=7
-                self._th.set_piece_deadline(i,min_deadline, lt.deadline_flags.alert_when_available)
-                logger.debug("Set deadline %d for piece %d", min_deadline,i)
-            else:
-                priorities[i]=1
-                if i-first_piece <=5:
-                    dl=(i-first_piece)*piece_duration+min_deadline
-                    self._th.set_piece_deadline(i, dl,lt.deadline_flags.alert_when_available)
-                    logger.debug("Set deadline %d for piece %d", dl,i)
-                else:
-                    self._th.reset_piece_deadline(i)
+        dl=idx*piece_duration+min_deadline
+        self._th.set_piece_deadline(pc, dl,lt.deadline_flags.alert_when_available)
+        logger.debug("Set deadline %d for piece %d", dl,pc)
         
+    def prioritize_file(self):
+        meta=self._th.get_torrent_info()
+        priorities=[1 if i>= self._file.first_piece and i<= self.file.last_piece else 0 \
+                    for i in xrange(meta.num_pieces())]       
         self._th.prioritize_pieces(priorities)
-        
         
             
     def add_monitor_listener(self, cb):
@@ -540,167 +519,124 @@ class Player(object):
             return ""
         
         
-class BTPieces(object):
-    def __init__(self, fmap, size, pieces, piece_size): 
-        self._first_piece=fmap.piece
-        self._offset= fmap.start
-        self._size=size
-        self._piece_size=piece_size
-        self._last_piece=self.piece_no(self._size-1)
-        self.update_progress(pieces)
-        self._ready=0
-    
-    @property
-    def first_piece_abs(self):
-        return self._first_piece
-    
-    @property
-    def last_piece_abs(self):
-        return self._first_piece + self._last_piece
-    
-    @property    
-    def piece_size(self):
-        return self._piece_size
-        
-    @property
-    def pieces(self):
-        return self._pieces
-        
-    def _map_pieces(self, pieces):  
-        res= pieces[self._first_piece:self._first_piece+self._last_piece+1]
-        if len(res)!= self._last_piece+1:
-            raise ValueError("Invalid pieces array - shorter then required")
-        return res
-    
-    def piece_no(self, offset):
-        if offset>=self._size:
-            raise ValueError('Invalid offset - bigger then file size')
-        if offset<0:
-            raise ValueError('Invalid offset - negative')
-        
-        return int((floor(float(self._offset+offset)/ self._piece_size)))
-    
-    def remains(self, offset):
-        return self._piece_size - self._offset+offset % self._piece_size
-    
-    
-    def update_progress(self, pieces):
-        self._pieces= self._map_pieces(pieces)
-        
-    @property    
-    def last_piece_size(self):
-        return self._offset+self._size % self._piece_size 
-    
-    def has_offset(self, offset):
-        return self._pieces[self.piece_no(offset)]
-    
-    def can_read(self, offset, size):
-        count=0
-        if offset>=self._offset+self._size:
-            raise ValueError('Invalid offset - bigger then file size')
-        elif offset<0:
-            raise ValueError('Invalid offset - negative')
-        
-        
-        if size+offset>= self._size:
-            size=max(0, self._size - offset)
-        
-        if size <= 0:
-            raise ValueError('Invalid size - zero or negative')
-        
-        
-        
-        pc_start=self.piece_no(offset)
-        pc_end=self.piece_no(offset+size-1)
-        bytes=self.remains(offset)  # @ReservedAssignment
-        pc=pc_start
-        while pc <= pc_end:
-            if not self._pieces[pc]:
-                return min(count,size),pc
-            count+=bytes
-            if count>=size:
-                return size,None
-            pc+=1
-            bytes = self._piece_size if pc<self._last_piece else self.last_piece_size  # @ReservedAssignment
-            
-        return min(count,size), None
-    #Partial container interface 
-    def __getitem__(self, i): 
-        return self._pieces[i]
-    
-    def __setitem__(self, i, val):
-        self._pieces[i]=val
-        
-    def __iter__(self):
-        return self._pieces.__iter__()
-    
-    def __len__(self):
-        return self._pieces.__len__()
-    
 
-Piece=namedtuple('Piece', ['index', 'data'])
     
 class PieceCache(object):
+    TIMEOUT=30
     size=5
     def __init__(self, btfile):   
-        self._btfile=btfile
-        self._cache=collections.deque(max_size=PieceCache.size)
-        self._pos=0
-        self._
+        #self._btfile=btfile
+        self._cache=[None] * self.size
+        self._lock=Lock()
+        self._event=Event()
+        self._cache_first=btfile.first_piece
+        self._piece_size= btfile.piece_size
+        self._map_offset = btfile.map_piece
+        self._file_size = btfile.size
+        self._last_piece = btfile.last_piece
+        self._request_piece=btfile.prioritize_piece
     
-    
-    
-    
-    def _get_piece(self, offset):
-        pc_no=self._btfile.piece_no(offset)    
-        while len(self._cache):
-            pc=self._cache.popleft()
-            if pc.no==pc_no:
-                return pc
-            #TBD
+    def fill_cache(self, first):
+        with self._lock:
+            diff=first-self._cache_first
+            if diff>0:
+                for i in xrange(self.size):
+                    if i+diff < self.size:
+                        self._cache[i]=self._cache[i+diff]
+                    else:
+                        self._cache[i]=None
+                        
+            elif diff<0:
+                for i in xrange(self.size-1, -1,-1):
+                    if i+diff>=0:
+                        self._cache[i]=self._cache[i+diff]
+                    else:
+                        self._cache[i]=None
+                        
+            self._cache_first=first
+            self._event.clear()
+            for i in xrange(self.size):
+                if self._cache[i] is None and (self._cache_first+i) <= self._last_piece:
+                    self._request_piece(self._cache_first+i, i)
+                    
+                    
+    def add_piece(self, n, data):
+        with self._lock:
+            i=n-self._cache_first
+            if i>=0 and i<self.size:
+                self._cache[i]=data
+                if i==0:
+                    self._event.set()
+            
         
-    def get(self, offset, size):
-        pass
+    def has_piece(self,n):  
+        with self._lock:
+            i=n-self._cache_first
+            if i>=0 and i<self.size:
+                return not (self._cache[i] is None)
     
-    def add(self, piece):
-        pass
+    def _wait_piece(self,pc_no):
+        while not self.has_piece(pc_no):
+            self.fill_cache(pc_no)
+            #self._event.clear()
+            self._event.wait(self.TIMEOUT)
+            
+    def _get_piece(self,n):
+        with self._lock:
+            i = n-self._cache_first
+            if i < 0 or i >self.size:
+                raise ValueError('index of of scope of current cache')
+            return self._cache[i]
+              
+    def get_piece(self,n):
+        self._wait_piece(n)
+        return self._get_piece(n)
+            
+        
+    def read(self, offset, size):
+        size = min(size, self._file_size - offset)
+        if not size:
+            return
+        
+        pc_no,ofs=self._map_offset(offset)    
+        data=self.get_piece(pc_no)
+        pc_size=self._piece_size-ofs
+        if pc_size>size:
+            return data[ofs: ofs+size]
+        else:
+            pieces=[data[ofs:self._piece_size]]
+            remains=size-pc_size
+            new_head=pc_no+1
+            while remains and self.has_piece(new_head):
+                sz=min(remains, self._piece_size)
+                data=self.get_piece(new_head)
+                pieces.append(data[:sz])
+                remains-=sz
+                if remains:
+                    new_head+=1
+            self.fill_cache(new_head)
+            return ''.join(pieces)
     
-    @property
-    def require(self):
-        pass
              
 class BTCursor(object):  
     def __init__(self, btfile):  
         self._btfile=btfile
-        self._wait_event= Event()
-        self._file=open(self._btfile.full_path,'rb')
-        self._wait_for_piece=None
+        self._pos=0
+        self._cache=PieceCache(btfile)
         
     def close(self):
-        self._file and self._file.close()
         self._btfile.remove_cursor(self)
         
     def read(self,n=None):
-        
-        if n is None:
-            n= self._btfile.size-self._file.tell()
-        if self._file.tell() >= self._btfile.size:
-            return None
-        while True:
-            ofs=self._file.tell()
-            to_read,wait_for_piece=self._btfile.can_read(ofs, n)
-            if to_read>0:
-                return self._file.read(to_read)
-            self._wait_for_piece=wait_for_piece
-            logger.debug('Read - waiting for ofs: %d, piece:%d', ofs, wait_for_piece)
-            self._btfile.prioritize(ofs)
-            self._wait_event.clear()
-            self._wait_event.wait()
-        to_read=min(self._done - self._file.tell(), n)
-        
-    def wake(self,test_cb):
-        if not self._wait_event.is_set() and (self._wait_for_piece is None or test_cb(self._wait_for_piece)):
-            self._wait_event.set()
+        sz=self._btfile.size - self._pos
+        if not n:
+            n=sz
+        else:
+            n=min(n,sz)
+        res=self._cache.read(self._pos,n)
+        if res:
+            self._pos+=len(res)
+        return res
         
     
     def seek(self,n):
@@ -708,15 +644,10 @@ class BTCursor(object):
             raise ValueError('Seeking beyond file size')
         elif n<0:
             raise ValueError('Seeking negative')
-        self._wait_for_piece=None
-        self._btfile.prioritize(n)
-        while not self._btfile.has_offset(n):
-            self._wait_for_piece=self._btfile.piece_no(n)
-            logger.debug('Seek - waiting for ofs: %d, piece:%d', n, self._wait_for_piece)
-            self._wait_event.clear()
-            self._wait_event.wait()
-        logger.debug('File seek to %d', n)
-        self._file.seek(n)
+        self._pos=n
+        
+    def update_piece(self,n,data):
+        self._cache.add_piece(n,data)
         
     def __enter__(self):
         return self
@@ -726,20 +657,23 @@ class BTCursor(object):
     
               
 class BTFile(object):     
-    def __init__(self, path, base, index, size, fmap, pieces, piece_size, prioritize_fn):
+    def __init__(self, path, base, index, size, fmap, piece_size, prioritize_fn):
         self._base=base
         self.path=path
         self.size=size
+        self.piece_size=piece_size
         self.index=index
-        self._pieces=BTPieces(fmap, size, pieces, piece_size)
+        self.first_piece=fmap.piece
+        self.last_piece=self.first_piece + (size+fmap.start) // piece_size
+        self.offset=fmap.start
         self._full_path= os.path.join(base,path)
         self._cursors=[]
         self._prioritize_fn=prioritize_fn
-        
         self._lock=Lock()
         self._duration=None
         self._rate=None
         self._piece_duration=None
+        
     
     def add_cursor(self,c):
         with self._lock:
@@ -753,34 +687,13 @@ class BTFile(object):
         c = BTCursor(self)  
         self.add_cursor(c)
         return c
-     
-    def has_offset(self, n):
-        return self._pieces.has_offset(n)  
-        
-    def can_read(self, offset, size):
-        return self._pieces.can_read(offset, size)
     
-    def piece_no(self, n):
-        return self._pieces.piece_no(n)
-    
-    def piece_no_abs(self, n):
-        return self._pieces.piece_no(n) + self._pieces.first_piece_abs
-    
-    @property    
-    def piece_size(self):
-        return self._pieces.piece_size
-    
-    @property
-    def pieces(self):
-        return self._pieces.pieces
-        
-    @property
-    def first_piece(self):
-        return self._pieces.first_piece_abs
-    
-    @property
-    def last_piece(self):
-        return self._pieces.last_piece_abs
+    def map_piece(self, ofs):
+        return  self.first_piece+ (ofs+self.offset) // self.piece_size , \
+                self.first_piece+ (ofs+self.offset) % self.piece_size
+                
+    def prioritize_piece(self, n, idx):  
+        self._prioritize_fn(n,idx)       
         
     @property
     def full_path(self):
@@ -796,7 +709,7 @@ class BTFile(object):
     def piece_duration_ms(self):
         if not self._piece_duration:
             if self.byte_rate:
-                self._piece_duration=self._pieces.piece_size/ self.byte_rate / 1000
+                self._piece_duration=self.piece_size/ self.byte_rate / 1000
                 
         return self._piece_duration
     
@@ -807,23 +720,13 @@ class BTFile(object):
             if d:
                 self._rate= self.size / d.total_seconds()
         return self._rate
-    
-    def update_pieces(self,pieces):
-        self._pieces.update_progress(pieces)
-        def test_cb(i):
-            return self._pieces[i]
-        with self._lock:
-            for c in self._cursors:
-                c.wake(test_cb)
-                 
-    def prioritize(self, offset): 
-        first_piece=self.piece_no_abs(offset)
-        last_piece=self.piece_no_abs(self.size-1)
-        logger.debug("Prioritizing offset %d - (pcs %d-%d)",offset, first_piece, last_piece)      
-        self._prioritize_fn(first_piece, last_piece)
-        
+            
     def remove(self):
         os.unlink(self._full_path)
+        
+    def update_piece(self, n, data):
+        for c in self._cursors:
+            c.update_piece(n,data)
         
     
     def __str__(self):
@@ -850,8 +753,6 @@ def print_status(s,download_queue, ctx):
         color=green
         
     status = state_str[s.state]
-    if s.state==3 and ctx['client'] and not ctx['client'].has_file_tail:
-        status="tailing"
     print '\r%.2f%% (of %.1fMB) (down: %s%.1f kB/s\033[39m(need %.1f) up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
         (s.progress * 100, s.total_wanted/1048576.0, 
          color, s.download_rate / 1000, s.desired_rate/1000.0 if s.desired_rate else 0.0,

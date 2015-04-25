@@ -16,11 +16,14 @@ from test_file import Peer_Request
 import cProfile
 import pstats
 from time import sleep
+from test_file import DummyClient
+
 TEST_FILE_SIZE= 12111222
 piece_size=2048
 
 import logging
 logging.basicConfig(level=logging.DEBUG)
+
 
 class Test(unittest.TestCase):
 
@@ -34,29 +37,15 @@ class Test(unittest.TestCase):
         f.close()
         
         size=os.stat(self.fname).st_size
-        
-        
         fmap=Peer_Request(0, 2000)
-        pieces=[False] * (2+ TEST_FILE_SIZE / piece_size)
         self.tf_size=size
         fname=os.path.split(self.fname)[1]
-        self.file=BTFile(fname, '/tmp',1,size, fmap, pieces, piece_size, lambda _: None)
+        self.client=DummyClient(self.fname, 0)
+        self.file=BTFile(fname, '/tmp',1,size, fmap, piece_size, self.client.request)
+        self.client.serve(self.file)
         self.server= StreamServer(('127.0.0.1', 5001), BTFileHandler, self.file)
         self.t=Thread(target=self.server.handle_request)
         self.t.start()
-        
-    def update_file(self):
-        def update():
-            for n in xrange(1,2+ TEST_FILE_SIZE / piece_size+1):
-                pieces=[True] * n + [False] * (2+ TEST_FILE_SIZE / piece_size -n)
-                self.file.update_pieces(pieces)
-                sleep(0.001)
-                
-        t=Thread(target=update)
-        t.setDaemon(True)
-        t.start()
-        
-        
 
 
     def tearDown(self):
@@ -77,7 +66,7 @@ class Test(unittest.TestCase):
         
         
     def test_range(self):
-        self.update_file()
+        
         req=urllib2.Request('http://localhost:5001/'+self.file.path, 
                             headers={'Range': 'bytes=100000-'})
         res=urllib2.urlopen(req)
@@ -89,7 +78,11 @@ class Test(unittest.TestCase):
             else:
                 break
         
-        self.assertEqual(buf.tell(),self.tf_size - 100000)
+        self.assertEqual(buf.tell(),self.tf_size - 100000-2000)
+        with open(self.fname, 'rb') as f:
+            f.seek(102000)
+            ch=f.read()
+            self.assertEqual(buf.getvalue(),ch)
         
         
         
