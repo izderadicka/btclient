@@ -213,6 +213,20 @@ class BaseMonitor(Thread):
             except ValueError:
                 pass
             
+class Hasher(Thread):
+    def __init__(self, btfile,hash_cb):  
+        Thread.__init__(self, name="Hasher")
+        self._btfile=btfile     
+        self._hash_cb=hash_cb
+        self.hash=None
+        self.start()
+        
+    def run(self):  
+        with self._btfile.create_cursor() as c:
+            filehash=OpenSubtitles.hash_file(c, self._bt_file.size)  
+            self.hash=filehash
+            self._hash_cb(filehash)
+            
 
 class BTClient(object):
     def __init__(self, path_to_store, 
@@ -817,6 +831,9 @@ def main(args=None):
         logger.setLevel(logging.DEBUG)
         h=logging.handlers.RotatingFileHandler(args.debug_log)
         logger.addHandler(h)
+    else:
+        logger.setLevel(logging.CRITICAL)
+        logger.addHandler(logging.StreamHandler())
     if args.print_pieces:
         print_pieces(args) 
     else:   
