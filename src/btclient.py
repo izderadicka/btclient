@@ -255,6 +255,7 @@ class BTClient(object):
         self._dispatcher.add_listener(self._update_ready_pieces)
         self._ready=False
         self._file = None
+        self._hash = None
         
     
     
@@ -262,8 +263,11 @@ class BTClient(object):
     def file(self):
         return self._file
         
-    def on_file_ready(self, action):
-        self._on_ready=action
+    def set_on_file_ready(self, action):
+        self._on_ready_action=action
+     
+    def _on_file_ready(self, filehash):
+        pass
         
     @property    
     def is_file_ready(self):
@@ -277,6 +281,7 @@ class BTClient(object):
         if s.state>=3 and  s.state <= 5 and not self._file and s.progress>0:
             self._meta_ready(self._th.get_torrent_info())
             logger.debug('Got torrent metadata and start download')
+            
         elif self._file and not self._ready:
             progress=float(s.total_wanted_done)/s.total_wanted
             if progress >= self._start_stream_limit: #and self._file.done>= min(10000000,self._file.size):
@@ -286,8 +291,8 @@ class BTClient(object):
                     self._monitor.set_desired_rate(r)
                 #if done or not r or r < s.download_rate :# if want to wait until reasonable download rate is reached
                 self._ready=True
-                if self._on_ready:
-                    self._on_ready(self._file, done)
+                if self._on_ready_action:
+                    self._on_ready_action(self._file, done)
                     
     
             
@@ -873,7 +878,7 @@ def stream(args):
             player.start(f,base, stdin=sin,sub_lang=args.subtitles)
             logger.debug('Started media player for %s', f)
             
-        c.on_file_ready(start_play)
+        c.set_on_file_ready(start_play)
         logger.debug('Starting torrent client - libtorrent version %s', lt.version)
         c.start_torrent(args.torrent)
         while not c.is_file_ready:
