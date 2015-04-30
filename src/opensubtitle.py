@@ -13,6 +13,7 @@ import logging
 from subprocess import Popen
 import subprocess
 import struct
+import time
 logger=logging.getLogger('opensubtitles')
 
 class Urllib2Transport(xmlrpclib.Transport):
@@ -75,10 +76,11 @@ class OpenSubtitles(object):
         return  data if data else []
     
     @staticmethod    
-    def _sub_file(filename, ext):
+    def _sub_file(filename, lang, ext):
+        lang=lang.lower()
         path, fname=os.path.split(filename)
         fname=os.path.splitext(fname)[0]
-        return os.path.join(path, fname+'.'+ext)
+        return os.path.join(path, fname+'.'+lang+'.'+ext)
     
     @staticmethod    
     def _base_name(filename):
@@ -125,6 +127,31 @@ class OpenSubtitles(object):
         null.close()
         return res if res.startswith('http') else None
     
+    @staticmethod
+    def download_if_not_exists(filename, lang, filesize=None, filehash=None, sub_ext='srt',
+                               can_choose=True, overwrite=False, retries=3):
+        sfile=OpenSubtitles._sub_file(filename, lang, sub_ext)
+        if os.path.exists(sfile) and os.stat(sfile).st_size>0 and not overwrite:
+            logger.debug('subs %s are already downloaded', sfile)
+            return sfile
+        else:
+            while True:
+                try:
+                    with OpenSubtitles(lang) as opensub:
+                        res=  opensub.download(filename,filesize,filehash,can_choose)
+                    if res:
+                        logger.debug('Subtitles %s downloaded', res)
+                        return res
+                    else:
+                        logger.debug('No subtitles found for file %s in language %s',filename,lang)
+                        return
+                except urllib2.HTTPError,e:
+                    retries-=1
+                    if retries<=0:
+                        raise e
+                    logger.debug('Retrying to load subtitles due to HTTP error %d, remains %d attempts', e.code, retries)
+                    time.sleep(1)
+    
     def download(self, filename, filesize=None, filehash=None, can_choose=True):
         data=self.search(filename, filesize, filehash)
         if not data:
@@ -153,7 +180,7 @@ class OpenSubtitles(object):
             return self.download_link(filename, link, ext)
     
     def download_link(self, filename, link, ext):
-        out_file=OpenSubtitles._sub_file(filename, ext)
+        out_file=OpenSubtitles._sub_file(filename, self._lang, ext)
         res=urllib2.urlopen(link, timeout=10)
         data=StringIO(res.read())
         data.seek(0)
@@ -168,16 +195,12 @@ class OpenSubtitles(object):
         z.close()
         return out_file
     
-    @staticmethod
-    def has_subtitles_downloaded(filename, ext='srt'):
-        sfile=OpenSubtitles._sub_file(filename, ext)
-        if os.path.exists(sfile) and os.stat(sfile).st_size>0:
-                return True
-        return False
-    
     def logout(self):
-        res = self._proxy.LogOut(self._token)
-        self._parse_status(res)
+        try: 
+            res = self._proxy.LogOut(self._token)
+            self._parse_status(res)
+        except urllib2.HTTPError:
+            logger.warn('Failed to logout')
     
     def __enter__(self):
         self.login()
@@ -187,16 +210,10 @@ class OpenSubtitles(object):
         self.logout()
  
 def down(f, lang, overwrite=False):
-    if OpenSubtitles.has_subtitles_downloaded(f) and not overwrite:
-        print 'subs are already there'
-    else:
-        with OpenSubtitles(lang) as opensub:
-            filesize,filehash=calc_hash(f)
-            res=  opensub.download(f,filesize,filehash)
-            if res:
-                print 'subtitles %s downloaded' % res
-            else:
-                print 'no subs found'
+    filesize,filehash=calc_hash(f)
+    OpenSubtitles.download_if_not_exists(f, lang, filesize=filesize, 
+                        filehash=filehash, can_choose=True, overwrite=overwrite)
+       
 def calc_hash(f):  
     if not os.access(f, os.R_OK):
         raise ValueError('Cannot read from file %s' % f)

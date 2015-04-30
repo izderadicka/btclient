@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-__version__='0.3.0'
+__version__='0.3.1'
 
 import libtorrent as lt
 import time
@@ -26,6 +26,7 @@ import pprint
 import collections
 from opensubtitle import OpenSubtitles
 import pickle
+import urllib2
 
 
 hachoir_config.quiet = True
@@ -223,7 +224,7 @@ class Hasher(Thread):
         
     def run(self):  
         with self._btfile.create_cursor() as c:
-            filehash=OpenSubtitles.hash_file(c, self._bt_file.size)  
+            filehash=OpenSubtitles.hash_file(c, self._btfile.size)  
             self.hash=filehash
             self._hash_cb(filehash)
             
@@ -267,7 +268,13 @@ class BTClient(object):
         self._on_ready_action=action
      
     def _on_file_ready(self, filehash):
-        pass
+        r=self._file.byte_rate
+        if r:
+            self._monitor.set_desired_rate(r)
+        self._file.filehash=filehash
+        self._ready=True
+        if self._on_ready_action:
+            self._on_ready_action(self._file, False)
         
     @property    
     def is_file_ready(self):
@@ -281,18 +288,19 @@ class BTClient(object):
         if s.state>=3 and  s.state <= 5 and not self._file and s.progress>0:
             self._meta_ready(self._th.get_torrent_info())
             logger.debug('Got torrent metadata and start download')
+            self.hash=Hasher(self._file, self._on_file_ready)
             
-        elif self._file and not self._ready:
-            progress=float(s.total_wanted_done)/s.total_wanted
-            if progress >= self._start_stream_limit: #and self._file.done>= min(10000000,self._file.size):
-                done=progress>=1.0
-                r=self._file.byte_rate
-                if r:
-                    self._monitor.set_desired_rate(r)
-                #if done or not r or r < s.download_rate :# if want to wait until reasonable download rate is reached
-                self._ready=True
-                if self._on_ready_action:
-                    self._on_ready_action(self._file, done)
+#         elif self._file and not self._ready:
+#             progress=float(s.total_wanted_done)/s.total_wanted
+#             if progress >= self._start_stream_limit: #and self._file.done>= min(10000000,self._file.size):
+#                 done=progress>=1.0
+#                 r=self._file.byte_rate
+#                 if r:
+#                     self._monitor.set_desired_rate(r)
+#                 #if done or not r or r < s.download_rate :# if want to wait until reasonable download rate is reached
+#                 self._ready=True
+#                 if self._on_ready_action:
+#                     self._on_ready_action(self._file, done)
                     
     
             
@@ -493,7 +501,7 @@ class Player(object):
         params.extend(self._player_options)
         if sub_lang:
             try:
-                params.extend(self.load_subs(f.full_path, sub_lang))
+                params.extend(self.load_subs(f.full_path, sub_lang, f.size, f.filehash))
             except Exception,e:
                 logger.exception('Cannot load subtitles, error: %s',e)
         if stdin:
@@ -511,21 +519,22 @@ class Player(object):
         self._log = Player.Log(self._proc)
         self._started.set()
     
-    def load_subs(self, filename, lang):
+    def load_subs(self, filename, lang, filesize, filehash):
         logger.debug('Downloading %s subs for %s', lang, filename)
-        with OpenSubtitles(lang) as opensub:
-            res=  opensub.download(filename)
-            if res:
-                logger.debug('Loadeded subs')
-                if self._player_name=='mplayer':
-                    return ['-sub', res]
-                elif self._player_name=='vlc':
-                    return ['--sub-file=%s'%res]
-                else:
-                    logger.error('Unknown player %s, cannot add subs', self._player_name)
+        res=  OpenSubtitles.download_if_not_exists(filename,lang, filesize, filehash)
+        if res:
+            logger.debug('Loadeded subs')
+            if self._player_name=='mplayer':
+                return ['-sub', res]
+            elif self._player_name=='vlc':
+                return ['--sub-file=%s'%res]
             else:
-                logger.debug('No subs found')
-                return []
+                logger.error('Unknown player %s, cannot add subs', self._player_name)
+        else:
+            logger.debug('No subs found')
+            return []
+            
+            
         
     def write(self, data):
         self._proc.stdin.write(data)
@@ -831,6 +840,7 @@ def main(args=None):
     p.add_argument("--stdin", action='store_true', help='sends video to player via stdin (no seek then)')
     p.add_argument("--print-pieces", action="store_true", help="Prints map of downloaded pieces and ends (X is downloaded piece, O is not downloaded)")
     p.add_argument("-s", "--subtitles", action=LangAction, help="language for subtitle 3 letter code eng,cze ... (will try to get subtitles from opensubtitles.org)")
+    p.add_argument("--stream", action="store_true", help="just file streaming, but will not start player")
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)
@@ -854,31 +864,44 @@ def stream(args):
         if args.debug_log:
             c.add_monitor_listener(debug_download_queue)
             c.add_dispatcher_listener(debug_alerts)
-        player=find_executable(args.player)
-        if not player:
-            print >>sys.stderr, "Cannot find player %s on path"%args.player
-        player=Player(player)
+            
+        player=None
+        if  not args.stream:
+            player=find_executable(args.player)
+            if not player:
+                print >>sys.stderr, "Cannot find player %s on path"%args.player
+            player=Player(player)
         
         server=None
         if not args.stdin:
             server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=True)
             logger.debug('Started http server on port %d', args.port)
-        def start_play(f, finished):
-            base=None
-            if not args.stdin:
+        
+        if player:
+            def start_play(f, finished):
+                base=None
+                if not args.stdin:
+                    server.set_file(f)
+                    server.run()
+                    base='http://127.0.0.1:'+ str(args.port)+'/'
+                sin=args.stdin
+                if finished:
+                    base=args.directory
+                    sin=False
+                    logger.debug('File is already downloaded, will play it directly')
+                    args.play_file=True
+                player.start(f,base, stdin=sin,sub_lang=args.subtitles)
+                logger.debug('Started media player for %s', f)
+            c.set_on_file_ready(start_play)
+        else:
+            def print_url(f,done):
                 server.set_file(f)
                 server.run()
                 base='http://127.0.0.1:'+ str(args.port)+'/'
-            sin=args.stdin
-            if finished:
-                base=args.directory
-                sin=False
-                logger.debug('File is already downloaded, will play it directly')
-                args.play_file=True
-            player.start(f,base, stdin=sin,sub_lang=args.subtitles)
-            logger.debug('Started media player for %s', f)
+                url=urlparse.urljoin(base, f.path)
+                print "\nServing file on %s" % url
+            c.set_on_file_ready(print_url)
             
-        c.set_on_file_ready(start_play)
         logger.debug('Starting torrent client - libtorrent version %s', lt.version)
         c.start_torrent(args.torrent)
         while not c.is_file_ready:
@@ -889,7 +912,7 @@ def stream(args):
             f=c.file.create_cursor()
             
         while True:
-            if not player.is_playing():
+            if player and not player.is_playing():
                 break
             if not f:
                 time.sleep(1)
@@ -908,11 +931,13 @@ def stream(args):
         logger.debug('Play ended')       
         if server:
             server.stop()    
-        if player.rcode != 0:
-            msg='Player ended with error %d\n' % (player.rcode or 0)
-            sys.stderr.write(msg)
-            logger.error(msg)
-        logger.debug("Player output:\n %s", player.log)
+        if player: 
+            if player.rcode != 0:
+                msg='Player ended with error %d\n' % (player.rcode or 0)
+                sys.stderr.write(msg)
+                logger.error(msg)
+        
+            logger.debug("Player output:\n %s", player.log)
     finally:
         c.save_state()
     
