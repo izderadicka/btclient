@@ -9,6 +9,8 @@ import os
 from StringIO import StringIO
 import tempfile
 import time
+import random
+from time import sleep
 test_file='test_file.py'
 from threading import Thread
 from Queue import Queue
@@ -169,6 +171,81 @@ class Test(unittest.TestCase):
         self.assertEqual(len(ref), len(buf.getvalue()))
         self.assertEqual(ref, buf.getvalue())
         c.close()
+        
+        
+    def test_seek2(self):
+        size=TEST_FILE_SIZE 
+        fmap=Peer_Request(0, 0)
+        client=DummyClient(self.fname)
+        bt = BTFile(self.fname, './',1, size, fmap, 768, client.request)
+        client.serve(bt)
+        c=bt.create_cursor()
+        c.seek(555)
+        buf=StringIO()
+        while True:
+            sz=1024
+            res=c.read(sz)
+            if res:
+                buf.write(res)
+            else:
+                break
+        with open(self.fname, 'rb') as f:
+            f.seek(555)
+            ref=f.read(size)
+        self.assertEqual(len(ref), len(buf.getvalue()))
+        self.assertEqual(ref, buf.getvalue())
+        
+        buf=StringIO()
+        c.seek(10000)
+        while True:
+            sz=512
+            res=c.read(sz)
+            if res:
+                buf.write(res)
+            else:
+                break
+        with open(self.fname, 'rb') as f:
+            f.seek(10000)
+            ref=f.read(size)
+        self.assertEqual(len(ref), len(buf.getvalue()))
+        self.assertEqual(ref, buf.getvalue())
+        
+        with open(self.fname, 'rb') as f:
+            for _i in xrange(10):
+                seek=random.randint(0,size)
+                c.seek(seek)
+                res=c.read(100)
+                f.seek(seek)
+                ref=f.read(len(res))
+                self.assertTrue(res,ref)
+        
+        c.close()
+        
+    def test_clone(self, close_first=False):
+        size=TEST_FILE_SIZE 
+        fmap=Peer_Request(0, 0)
+        
+        client=DummyClient(self.fname)
+        bt = BTFile(self.fname, './',1, size, fmap, 512, client.request)
+        client.serve(bt)
+        c=bt.create_cursor()
+        c.seek(5000)
+        c.read(100)
+        sleep(0.1)
+        self.assertTrue(all(c._cache._cache))
+        if close_first:
+            c.close()
+        c2=bt.create_cursor(expected_offset=5000)
+        self.assertTrue(all(c2._cache._cache))
+        def no(*args):
+            raise Exception('Should not be called')
+        client.request=no
+        c2.seek(5000)
+        c2.read(100)
+        
+    def test_clone2(self):
+        self.test_clone(True)
+      
         
         
 

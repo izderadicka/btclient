@@ -97,7 +97,38 @@ class Test(unittest.TestCase):
         self.assertEqual(1024*56, len(res))    
         self.assertEqual(f.data[734:734+1024*56], res)
         
-    def test_read_larger2(self):
+    def test_clone(self):
+        f=DummyBTFile(1024, 1024*56, offset=734, appendix=283)
+        c=f.get_cache()
+        s=StringIO()
+        pos=0
+        while True:
+            t=c.read(pos,2000)
+            if not t:
+                return
+            pos+=len(t)
+            s.write(t)
+           
+        res= s.getvalue()
+        self.assertEqual(1024*56, len(res))    
+        self.assertEqual(f.data[734:734+1024*56], res)
+        
+        c=c.clone()
+        s=StringIO()
+        pos=0
+        while True:
+            t=c.read(pos,2000)
+            if not t:
+                return
+            pos+=len(t)
+            s.write(t)
+           
+        res= s.getvalue()
+        self.assertEqual(1024*56, len(res))    
+        self.assertEqual(f.data[734:734+1024*56], res)
+        
+        
+    def test_read_larger3(self):
         f=DummyBTFile(1024, 1024*56, offset=734, appendix=283)
         c=f.get_cache()
         s=StringIO()

@@ -26,7 +26,9 @@ import pprint
 import collections
 from opensubtitle import OpenSubtitles
 import pickle
-import urllib2
+import copy
+from _collections import deque
+from cache import Cache
 
 
 hachoir_config.quiet = True
@@ -108,7 +110,7 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
     def do_GET(self):
         
         if self.do_HEAD(only_header=False):
-            with self.server.file.create_cursor() as f: 
+            with self.server.file.create_cursor(self._offset) as f: 
                 f.seek( self._offset)
                 send_something=False
                 while True:
@@ -246,7 +248,7 @@ class BTClient(object):
             with open(self._state_file) as f:
                 state=pickle.load(f)
                 self._ses.load_state(state)
-        #self._ses.set_alert_mask(lt.alert.category_t.progress_notification|lt.alert.category_t.status_notification)
+        #self._ses.set_alert_mask(lt.alert.category_t.progress_notification)
         self._ses.listen_on(port_min, port_max)
         self._start_services()
         self._th=None
@@ -257,6 +259,8 @@ class BTClient(object):
         self._ready=False
         self._file = None
         self._hash = None
+        self._cache=Cache(path_to_store)
+        self._url=None
         
     
     
@@ -266,6 +270,10 @@ class BTClient(object):
         
     def set_on_file_ready(self, action):
         self._on_ready_action=action
+        
+    def _file_complete(self):
+        pcs=self._th.status().pieces[self._file.first_piece:self._file.last_piece+1]
+        return all(pcs)
      
     def _on_file_ready(self, filehash):
         r=self._file.byte_rate
@@ -274,7 +282,7 @@ class BTClient(object):
         self._file.filehash=filehash
         self._ready=True
         if self._on_ready_action:
-            self._on_ready_action(self._file, False)
+            self._on_ready_action(self._file, self._file_complete())
         
     @property    
     def is_file_ready(self):
@@ -283,26 +291,12 @@ class BTClient(object):
     def _update_ready_pieces(self, alert_type, alert):
         if alert_type == 'read_piece_alert' and self._file:
             self._file.update_piece(alert.piece, alert.buffer)
-    
+            
     def _check_ready(self, s, **kwargs):
         if s.state>=3 and  s.state <= 5 and not self._file and s.progress>0:
             self._meta_ready(self._th.get_torrent_info())
             logger.debug('Got torrent metadata and start download')
             self.hash=Hasher(self._file, self._on_file_ready)
-            
-#         elif self._file and not self._ready:
-#             progress=float(s.total_wanted_done)/s.total_wanted
-#             if progress >= self._start_stream_limit: #and self._file.done>= min(10000000,self._file.size):
-#                 done=progress>=1.0
-#                 r=self._file.byte_rate
-#                 if r:
-#                     self._monitor.set_desired_rate(r)
-#                 #if done or not r or r < s.download_rate :# if want to wait until reasonable download rate is reached
-#                 self._ready=True
-#                 if self._on_ready_action:
-#                     self._on_ready_action(self._file, done)
-                    
-    
             
     def _choose_file(self, files, search=None):    
         videos=filter(lambda f: VIDEO_EXTS.has_key(os.path.splitext(f.path)[1]), files)
@@ -326,6 +320,8 @@ class BTClient(object):
             logger.debug('File %s pieces (pc=%d, ofs=%d, sz=%d), total_pieces=%d, pc_length=%d', 
                      f.path,fmap.piece, fmap.start, fmap.length, 
                      meta.num_pieces(), meta.piece_length() )
+            
+        self._cache.file_complete(self._th.torrent_file(), self._url if self._url and self._url.startswith('http') else None )
         
     
     def prioritize_piece(self, pc, idx):
@@ -369,13 +365,28 @@ class BTClient(object):
         if self._th:
             raise Exception('Torrent is already started')
         
+        def info_from_file(uri):
+            if os.access(uri,os.R_OK):
+                info = lt.torrent_info(uri)
+                return {'ti':info} 
+            raise ValueError('Invalid torrent path %s' % uri)
+        
         if uri.startswith('http://') or uri.startswith('https://'):
-            tp={'url':uri}
+            self._url=uri
+            stored=self._cache.get_torrent(url=uri)
+            if stored:
+                tp=info_from_file(stored)
+            else:
+                tp={'url':uri}
         elif uri.startswith('magnet:'):
-            tp={'url':uri}
+            self._url=uri
+            stored=self._cache.get_torrent(info_hash=Cache.hash_from_magnet(uri))
+            if stored:
+                tp=info_from_file(stored)
+            else:
+                tp={'url':uri}
         elif os.path.isfile(uri):
-            info = lt.torrent_info(uri)
-            tp={'ti':info}
+            tp=info_from_file(uri)
         else:
             raise ValueError("Invalid torrent %s" %uri)
         
@@ -576,7 +587,19 @@ class PieceCache(object):
         self._file_size = btfile.size
         self._last_piece = btfile.last_piece
         self._request_piece=btfile.prioritize_piece
+        self._btfile=btfile
     
+    def clone(self):
+        c=PieceCache(self._btfile)
+        with self._lock:
+            c._cache=copy.copy(self._cache)
+            c._cache_first=self._cache_first
+        return c
+    
+    @property
+    def cached_piece(self):
+        self._cache_first
+        
     def fill_cache(self, first):
         with self._lock:
             diff=first-self._cache_first
@@ -666,6 +689,11 @@ class BTCursor(object):
         self._pos=0
         self._cache=PieceCache(btfile)
         
+    def clone(self):
+        c=BTCursor(self._btfile)
+        c._cache=self._cache.clone()
+        return c
+        
     def close(self):
         self._btfile.remove_cursor(self)
         
@@ -687,6 +715,9 @@ class BTCursor(object):
         elif n<0:
             raise ValueError('Seeking negative')
         self._pos=n
+        
+    def tell(self):
+        return self._pos
         
     def update_piece(self,n,data):
         self._cache.add_piece(n,data)
@@ -715,6 +746,7 @@ class BTFile(object):
         self._duration=None
         self._rate=None
         self._piece_duration=None
+        self._cursors_history=deque(maxlen=3)
         
     
     def add_cursor(self,c):
@@ -724,9 +756,25 @@ class BTFile(object):
     def remove_cursor(self, c):
         with self._lock:
             self._cursors.remove(c)
+            self._cursors_history.appendleft(c)
         
-    def create_cursor(self):
-        c = BTCursor(self)  
+    def create_cursor(self, expected_offset=None):
+        c=None
+        if expected_offset is not None:
+            with self._lock:
+                for e in reversed(self._cursors):
+                    if abs(e.tell()-expected_offset)< self.piece_size:
+                        c=e.clone()
+                        logger.debug('Cloning existing cursor')
+                        break
+            if not c:        
+                with self._lock:
+                    for e in reversed(self._cursors_history):
+                        if abs(e.tell()-expected_offset)< self.piece_size:
+                            c=e
+                            logger.debug('Reusing previous cursor')
+        if not c:                
+            c = BTCursor(self)  
         self.add_cursor(c)
         return c
     
