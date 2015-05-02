@@ -7,6 +7,8 @@ import os.path
 import shelve
 import libtorrent as lt
 import re
+import logging
+logger=logging.getLogger('cache')
 
 class Cache(object):
     def __init__(self, path):
@@ -17,6 +19,8 @@ class Cache(object):
             os.mkdir(self.path)
         self._index_path=os.path.join(self.path, 'index')
         self._index=shelve.open(self._index_path)
+        self._last_pos_path=os.path.join(self.path, 'last_position')
+        self._last_pos=shelve.open(self._last_pos_path)
         
         
     def save(self, url, info_hash):
@@ -25,6 +29,7 @@ class Cache(object):
         
     def close(self):
         self._index.close()
+        self._last_pos.close()
         
     def _tname(self, info_hash):
         return os.path.join(self.path, info_hash.upper()+'.torrent')
@@ -47,6 +52,7 @@ class Cache(object):
             return
         tname=self._tname(info_hash)    
         if os.access(tname,os.R_OK):
+            logger.debug('Torrent is cached')
             return tname
      
     magnet_re=re.compile('xt=urn:btih:([0-9A-Fa-f]+)')   
@@ -57,3 +63,12 @@ class Cache(object):
             return res.group(1).upper()
         else:
             raise ValueError('Not BT magnet link')
+        
+    def play_position(self, torrent, secs):
+        info_hash=str(torrent.info_hash())
+        self._last_pos[info_hash]=secs
+        
+    def get_last_position(self, torrent):
+        info_hash=str(torrent.info_hash())
+        return self._last_pos.get(info_hash) or 0
+        

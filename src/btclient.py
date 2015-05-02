@@ -8,7 +8,6 @@ import argparse
 import os.path
 from threading import Thread, Lock, Event
 import re
-import subprocess
 import urlparse
 import BaseHTTPServer as htserver
 import types
@@ -20,15 +19,15 @@ from hachoir_parser import createParser
 import hachoir_core.config as hachoir_config
 import urllib
 import SocketServer
-from distutils.spawn import find_executable
 import socket
 import pprint
-import collections
 from opensubtitle import OpenSubtitles
 import pickle
 import copy
 from _collections import deque
 from cache import Cache
+from player import Player
+import threading
 
 
 hachoir_config.quiet = True
@@ -219,9 +218,12 @@ class BaseMonitor(Thread):
 class Hasher(Thread):
     def __init__(self, btfile,hash_cb):  
         Thread.__init__(self, name="Hasher")
+        if btfile is None:
+            raise ValueError('BTFile is None!')
         self._btfile=btfile     
         self._hash_cb=hash_cb
         self.hash=None
+        self.daemon=True
         self.start()
         
     def run(self):  
@@ -235,13 +237,11 @@ class BTClient(object):
     def __init__(self, path_to_store, 
                  port_min= 6881, 
                  port_max=6891,
-                 start_stream_limit=0.02,
                  state_file="~/.btclient_state"):
         self._base_path=path_to_store
         self._torrent_params={'save_path':path_to_store,
                               'storage_mode':lt.storage_mode_t.storage_mode_sparse
                               }
-        self._start_stream_limit=start_stream_limit
         self._state_file=os.path.expanduser(state_file)
         self._ses=lt.session()
         if os.path.exists(self._state_file):
@@ -402,6 +402,8 @@ class BTClient(object):
     def stop(self):
         self._monitor.stop()
         self._monitor.join()
+        self._dispatcher.stop()
+        self._dispatcher.join()
         
 
     def _start_services(self):
@@ -421,7 +423,18 @@ class BTClient(object):
         state=self._ses.save_state()
         with open(self._state_file, 'wb') as f:
             pickle.dump(state,f)
-        #pprint.pprint(state)
+    
+    def close(self):
+        if self._cache:
+            self._cache.close()
+        self.save_state()
+        
+    def update_play_time(self, playtime):
+        self._cache.play_position(self._th.torrent_file(), playtime)
+    
+    @property    
+    def last_play_time(self):
+        return self._cache.get_last_position(self._th.torrent_file())
     
     class Dispatcher(BaseMonitor):
         def __init__(self, client):
@@ -464,111 +477,7 @@ class BTClient(object):
                 self._wait_event.wait(1.0)
 
 
-class Player(object):
-    class Log():
-        def __init__(self, p):
-            self._log = collections.deque(maxlen=80)
-            self._p=p
-            self._stdin_reader= self._mk_thread(p.stdout, "Player stdout reader")
-            self._stderr_reader= self._mk_thread(p.stderr, "Player stderr reader")
-            
-        def _mk_thread(self, pipe, name):
-            t= Thread(target=self._read_pipe, name=name, args=(pipe,))
-            t.setDaemon(True)
-            t.start()
-            return t
-        
-        def _read_pipe(self, pipe):
-            while True:
-                l= pipe.readline()
-                if not l:
-                    break
-                self._log.append(l)
-                
-        @property        
-        def log(self):
-            return ''.join(self._log)
-        
-            
-    def __init__(self,player):
-        self._player=player
-        self._proc=None
-        self._player_options=[]
-        self._log =None
-        player_name=os.path.split(player)[1]
-        if player_name =='mplayer':
-            self._player_options=[]#'--nocache']#'--cache=8192', '--cache-min=50']
-        self._player_name=player_name
-        self._started=Event()
-        
-        
-    def start(self, f, base, stdin, sub_lang=None):
-        null_dev= open(os.devnull, 'w')
-        env=os.environ.copy()
-        #assure not using proxy
-        env.pop('http_proxy', '')
-        env.pop('HTTP_PROXY', '')
-        params=[self._player,]
-        params.extend(self._player_options)
-        if sub_lang:
-            try:
-                params.extend(self.load_subs(f.full_path, sub_lang, f.size, f.filehash))
-            except Exception,e:
-                logger.exception('Cannot load subtitles, error: %s',e)
-        if stdin:
-            params.append('-')
-            sin=subprocess.PIPE
-        else:
-            if not base.endswith(os.sep):
-                base+=os.sep
-            params.append(urlparse.urljoin(base, f.path))
-            sin=None
-        self._proc=subprocess.Popen(params, 
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                                    env=env, 
-                                    stdin=sin)
-        self._log = Player.Log(self._proc)
-        self._started.set()
-    
-    def load_subs(self, filename, lang, filesize, filehash):
-        logger.debug('Downloading %s subs for %s', lang, filename)
-        res=  OpenSubtitles.download_if_not_exists(filename,lang, filesize, filehash)
-        if res:
-            logger.debug('Loadeded subs')
-            if self._player_name=='mplayer':
-                return ['-sub', res]
-            elif self._player_name=='vlc':
-                return ['--sub-file=%s'%res]
-            else:
-                logger.error('Unknown player %s, cannot add subs', self._player_name)
-        else:
-            logger.debug('No subs found')
-            return []
-            
-            
-        
-    def write(self, data):
-        self._proc.stdin.write(data)
-        
-    def close(self):
-        if self._proc.stdin and hasattr(self._proc.stdin, 'close'):
-            self._proc.stdin.close()
-        
-    def is_playing(self):
-        self._started.wait()
-        self._proc.poll()
-        return self._proc.returncode is None
-    
-    @property
-    def rcode(self):
-        return self._proc.returncode if self._proc else None
-    
-    @property
-    def log(self):
-        if self._log:
-            return self._log.log
-        else:
-            return ""
+
         
         
 
@@ -882,7 +791,6 @@ def main(args=None):
     p.add_argument("torrent", help="Torrent file, link to file or magnet link")
     p.add_argument("-d", "--directory", default="./", help="directory to save download files")
     p.add_argument("-p", "--player", default="mplayer", choices=["mplayer","vlc"], help="Video player")
-    p.add_argument("-m", "--minimum", default=1.0, type=float, help="Minimum %% of file to be downloaded to start player")
     p.add_argument("--port", type=int, default=5001,help="Port for http server")
     p.add_argument("--debug-log", default='',help="File for debug logging")
     p.add_argument("--stdin", action='store_true', help='sends video to player via stdin (no seek then)')
@@ -906,7 +814,7 @@ def main(args=None):
 
         
 def stream(args):
-    c= BTClient(args.directory, start_stream_limit=args.minimum/ 100.0)
+    c= BTClient(args.directory)
     try:
         c.add_monitor_listener(print_status)
         if args.debug_log:
@@ -915,10 +823,7 @@ def stream(args):
             
         player=None
         if  not args.stream:
-            player=find_executable(args.player)
-            if not player:
-                print >>sys.stderr, "Cannot find player %s on path"%args.player
-            player=Player(player)
+            player=Player.create(args.player,c.update_play_time)
         
         server=None
         if not args.stdin:
@@ -938,7 +843,8 @@ def stream(args):
                     sin=False
                     logger.debug('File is already downloaded, will play it directly')
                     args.play_file=True
-                player.start(f,base, stdin=sin,sub_lang=args.subtitles)
+                start_time=c.last_play_time or 0    
+                player.start(f,base, stdin=sin,sub_lang=args.subtitles,start_time=start_time)
                 logger.debug('Started media player for %s', f)
             c.set_on_file_ready(start_play)
         else:
@@ -987,7 +893,8 @@ def stream(args):
         
             logger.debug("Player output:\n %s", player.log)
     finally:
-        c.save_state()
+        c.close()
+        logger.debug("Remaining threads %s", list(threading.enumerate()))
     
 
 def pieces_map(pieces, w):
@@ -1010,7 +917,7 @@ def pieces_map(pieces, w):
 def print_pieces(args):
     def w(x):
         sys.stdout.write(x)
-    c= BTClient(args.directory, start_stream_limit=args.minimum/ 100.0)
+    c= BTClient(args.directory)
     c.start_torrent(args.torrent)
     #c.add_listener(print_status)
     start = time.time()
