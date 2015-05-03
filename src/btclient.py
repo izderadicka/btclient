@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-__version__='0.3.2'
+__version__='0.3.3'
 
 import libtorrent as lt
 import time
@@ -797,6 +797,7 @@ def main(args=None):
     p.add_argument("--print-pieces", action="store_true", help="Prints map of downloaded pieces and ends (X is downloaded piece, O is not downloaded)")
     p.add_argument("-s", "--subtitles", action=LangAction, help="language for subtitle 3 letter code eng,cze ... (will try to get subtitles from opensubtitles.org)")
     p.add_argument("--stream", action="store_true", help="just file streaming, but will not start player")
+    p.add_argument("--no-resume", action="store_true",help="Do not resume from last known position")
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)
@@ -843,7 +844,11 @@ def stream(args):
                     sin=False
                     logger.debug('File is already downloaded, will play it directly')
                     args.play_file=True
-                start_time=c.last_play_time or 0    
+               
+                if args.no_resume:
+                    start_time=0
+                else:
+                    start_time=c.last_play_time or 0    
                 player.start(f,base, stdin=sin,sub_lang=args.subtitles,start_time=start_time)
                 logger.debug('Started media player for %s', f)
             c.set_on_file_ready(start_play)
