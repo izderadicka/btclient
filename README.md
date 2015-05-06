@@ -6,9 +6,9 @@ video player (via http or stdin, but stdin is not seekable) when got enough of t
 playback
 
 ```
-usage: btclient.py [-h] [-d DIRECTORY] [-p {mplayer,vlc}] [-m MINIMUM]
-                   [--port PORT] [--debug-log DEBUG_LOG] [--stdin]
-                   [--print-pieces] [-s SUBTITLES]
+usage: btclient.py [-h] [-d DIRECTORY] [-p {mplayer,vlc}] [--port PORT]
+                   [--debug-log DEBUG_LOG] [--stdin] [--print-pieces]
+                   [-s SUBTITLES] [--stream] [--no-resume]
                    torrent
 ```
 
@@ -24,9 +24,17 @@ Install
 
 Now manual:
 ```
-sudo apt-get install python-libtorrent 
+#install libtorrent manually - latest 1.0.4 from 
+sudo apt-get install libboost-system-dev libboost-chrono-dev libboost-python-dev libboost-random-dev
+svn checkout svn://svn.code.sf.net/p/libtorrent/code/trunk libtorrent-code
+./autotool.sh
+./configure --enable-python-binding
+make
+sudo make install
+
+
 sudo pip install hachoir-metadata hachoir-core hachoir-parser
-cp btclient.py opensubtitle.py btclient somewhere
+cp -r src  somewhere
 #can modify btclient script to your preferences
 ln -s /somewhere/btclient /usr/local/bin
 ```

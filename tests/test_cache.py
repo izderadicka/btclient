@@ -4,7 +4,7 @@ Created on Apr 22, 2015
 @author: ivan
 '''
 import unittest
-from btclient import PieceCache
+from common import PieceCache
 import os
 from StringIO import StringIO
 from Queue import Queue

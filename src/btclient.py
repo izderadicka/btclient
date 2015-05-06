@@ -14,40 +14,29 @@ import types
 import logging
 import logging.handlers
 import traceback
-from hachoir_metadata import extractMetadata
-from hachoir_parser import createParser
-import hachoir_core.config as hachoir_config
 import urllib
 import SocketServer
 import socket
 import pprint
 from opensubtitle import OpenSubtitles
 import pickle
-import copy
 from _collections import deque
 from cache import Cache
 from player import Player
 import threading
+from common import AbstractFile, Hasher, BaseMonitor, BaseClient
+from htclient import HTClient
 
-
-hachoir_config.quiet = True
 logger=logging.getLogger()
 
 VIDEO_EXTS={'.avi':'video/x-msvideo','.mp4':'video/mp4','.mkv':'video/x-matroska',
             '.m4v':'video/mp4','.mov':'video/quicktime', '.mpg':'video/mpeg','.ogv':'video/ogg', 
-            '.ogg':'video/ogg', '.webm':'video/webm'}
+            '.ogg':'video/ogg', '.webm':'video/webm', '.ts': 'video/mp2t'}
 
 RANGE_RE=re.compile(r'bytes=(\d+)-')
 
 #offset from end to download first
 FILE_TAIL=10000
-
-def get_duration(fn):
-    p=createParser(unicode(fn))
-    m=extractMetadata(p)
-    if m:
-        return m.getItem('duration',0) and m.getItem('duration',0).value
-
 
 def parse_range(range):  # @ReservedAssignment
     if range:
@@ -110,7 +99,6 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
         
         if self.do_HEAD(only_header=False):
             with self.server.file.create_cursor(self._offset) as f: 
-                f.seek( self._offset)
                 send_something=False
                 while True:
                     buf= f.read(1024) 
@@ -177,68 +165,16 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # @ReservedAssignment
         logger.debug(format, *args)
      
-class BaseMonitor(Thread): 
-    def __init__(self, client, name):
-        Thread.__init__(self,name=name)
-        self.daemon=True
-        self._th=None
-        self._listeners=[]
-        self._lock = Lock()
-        self._wait_event= Event()
-        self._running=True
-        self._start=self.start
-        self.start=None
-        self._ctx={'client':client}
-        self._ses=None
-       
-    def add_to_ctx(self,key,val):
-        self._ctx[key]=val   
-         
-    def do_start(self, th, ses): 
-        self._th = th
-        self._ses=ses
-        self._start()
-        
-    def stop(self):
-        self._running=False
-        self._wait_event.set()
-        
-    def add_listener(self, cb):
-        with self._lock:
-            if not cb in self._listeners:
-                self._listeners.append(cb)
-            
-    def remove_listener(self,cb):
-        with self._lock:
-            try:
-                self._listeners.remove(cb)
-            except ValueError:
-                pass
-            
-class Hasher(Thread):
-    def __init__(self, btfile,hash_cb):  
-        Thread.__init__(self, name="Hasher")
-        if btfile is None:
-            raise ValueError('BTFile is None!')
-        self._btfile=btfile     
-        self._hash_cb=hash_cb
-        self.hash=None
-        self.daemon=True
-        self.start()
-        
-    def run(self):  
-        with self._btfile.create_cursor() as c:
-            filehash=OpenSubtitles.hash_file(c, self._btfile.size)  
-            self.hash=filehash
-            self._hash_cb(filehash)
+
             
 
-class BTClient(object):
+class BTClient(BaseClient):
     def __init__(self, path_to_store, 
+                 args=None,
                  port_min= 6881, 
                  port_max=6891,
                  state_file="~/.btclient_state"):
-        self._base_path=path_to_store
+        super(BTClient,self).__init__(path_to_store)
         self._torrent_params={'save_path':path_to_store,
                               'storage_mode':lt.storage_mode_t.storage_mode_sparse
                               }
@@ -252,42 +188,22 @@ class BTClient(object):
         self._ses.listen_on(port_min, port_max)
         self._start_services()
         self._th=None
-        self._monitor= BTClient.Monitor(self)
+        
         self._monitor.add_listener(self._check_ready)
         self._dispatcher=BTClient.Dispatcher(self)
         self._dispatcher.add_listener(self._update_ready_pieces)
-        self._ready=False
-        self._file = None
         self._hash = None
-        self._cache=Cache(path_to_store)
         self._url=None
         
+        if args and args.debug_log:
+            self.add_monitor_listener(self.debug_download_queue)
+            self.add_dispatcher_listener(self.debug_alerts)
     
-    
-    @property
-    def file(self):
-        return self._file
-        
-    def set_on_file_ready(self, action):
-        self._on_ready_action=action
-        
-    def _file_complete(self):
+    @property    
+    def is_file_complete(self):
         pcs=self._th.status().pieces[self._file.first_piece:self._file.last_piece+1]
         return all(pcs)
      
-    def _on_file_ready(self, filehash):
-        r=self._file.byte_rate
-        if r:
-            self._monitor.set_desired_rate(r)
-        self._file.filehash=filehash
-        self._ready=True
-        if self._on_ready_action:
-            self._on_ready_action(self._file, self._file_complete())
-        
-    @property    
-    def is_file_ready(self):
-        return self._ready 
-    
     def _update_ready_pieces(self, alert_type, alert):
         if alert_type == 'read_piece_alert' and self._file:
             self._file.update_piece(alert.piece, alert.buffer)
@@ -302,6 +218,8 @@ class BTClient(object):
         videos=filter(lambda f: VIDEO_EXTS.has_key(os.path.splitext(f.path)[1]), files)
         if search:
             videos=filter(lambda f: re.match(search, f.path), videos)
+        if not videos:
+            raise Exception('No video files in torrent')
         f = sorted(videos, key=lambda f:f.size)[-1]
         i = files.index(f)
         f.index=i
@@ -311,15 +229,15 @@ class BTClient(object):
         fs=meta.files()
         files=fs if isinstance(fs, list) else [fs.at(i) for i in xrange(fs.num_files())]
         f=self._choose_file(files)
-        if os.path.exists(os.path.join(self._base_path, f.path)): #TODO:may now it's not needed that file physically exists
-            fmap=meta.map_file(f.index, 0, 1)
-            self._file=BTFile(f.path, self._base_path, f.index, f.size, fmap, meta.piece_length(),
-                              self.prioritize_piece)
-            self._monitor.add_to_ctx('file', self._file)
-            self.prioritize_file()
-            logger.debug('File %s pieces (pc=%d, ofs=%d, sz=%d), total_pieces=%d, pc_length=%d', 
-                     f.path,fmap.piece, fmap.start, fmap.length, 
-                     meta.num_pieces(), meta.piece_length() )
+        #if os.path.exists(os.path.join(self._base_path, f.path)): #TODO:may now it's not needed that file physically exists
+        fmap=meta.map_file(f.index, 0, 1)
+        self._file=BTFile(f.path, self._base_path, f.index, f.size, fmap, meta.piece_length(),
+                          self.prioritize_piece)
+        
+        self.prioritize_file()
+        logger.debug('File %s pieces (pc=%d, ofs=%d, sz=%d), total_pieces=%d, pc_length=%d', 
+                 f.path,fmap.piece, fmap.start, fmap.length, 
+                 meta.num_pieces(), meta.piece_length() )
             
         self._cache.file_complete(self._th.torrent_file(), self._url if self._url and self._url.startswith('http') else None )
         
@@ -343,25 +261,22 @@ class BTClient(object):
         priorities=[1 if i>= self._file.first_piece and i<= self.file.last_piece else 0 \
                     for i in xrange(meta.num_pieces())]       
         self._th.prioritize_pieces(priorities)
-        
+    
+    @property        
+    def unique_file_id(self):
+        return str(self._th.torrent_file().info_hash())    
     
     @property
     def pieces(self):
         return self._th.status().pieces
             
-    def add_monitor_listener(self, cb):
-        self._monitor.add_listener(cb)
-            
-    def remove_monitor_listener(self,cb):
-        self._monitor.remove_listener(cb)
-        
     def add_dispatcher_listener(self, cb):
         self._dispatcher.add_listener(cb)
             
     def remove_dispacher_listener(self,cb):
         self._dispatcher.remove_listener(cb)
         
-    def start_torrent(self, uri):
+    def start_url(self, uri):
         if self._th:
             raise Exception('Torrent is already started')
         
@@ -396,12 +311,11 @@ class BTClient(object):
 #         if tp.has_key('ti'):
 #             self._meta_ready(self._th.get_torrent_info())
         
-        self._monitor.do_start(self._th, self._ses)
+        self._monitor.start()
         self._dispatcher.do_start(self._th, self._ses)
         
     def stop(self):
-        self._monitor.stop()
-        self._monitor.join()
+        BaseClient.stop(self)(self)
         self._dispatcher.stop()
         self._dispatcher.join()
         
@@ -425,20 +339,25 @@ class BTClient(object):
             pickle.dump(state,f)
     
     def close(self):
-        if self._cache:
-            self._cache.close()
+        BaseClient.close(self)
         self.save_state()
+        self._stop_services()
         
-    def update_play_time(self, playtime):
-        self._cache.play_position(self._th.torrent_file(), playtime)
-    
-    @property    
-    def last_play_time(self):
-        return self._cache.get_last_position(self._th.torrent_file())
+    @property
+    def status(self):
+        if self._th:
+            s = self._th.status()
+            s.desired_rate=self._file.byte_rate if self._file else 0
+            return s
     
     class Dispatcher(BaseMonitor):
         def __init__(self, client):
             super(BTClient.Dispatcher,self).__init__(client, name='Torrent Events Dispatcher')
+            
+        def do_start(self, th, ses): 
+            self._th = th
+            self._ses=ses
+            self.start()
             
         def run(self):
             if not self._ses:
@@ -452,327 +371,66 @@ class BTClient(object):
                         with self._lock:
                             for cb in self._listeners:
                                 cb(lt.alert.what(alert), alert)
+                                
+    STATE_STR = ['queued', 'checking', 'downloading metadata', \
+                    'downloading', 'finished', 'seeding', 'allocating', 'checking fastresume']    
+    
+    def print_status(self,s,client):
+        color=''
+        default='\033[39m'
+        green='\033[32m'
+        red='\033[31m'
+        yellow='\033[33m'
+        if s.progress >=1.0 or not s.desired_rate or s.state > 3:
+            color=default
+        elif s.desired_rate > s.download_rate:
+            color=red
+        elif s.download_rate > s.desired_rate and s.download_rate < s.desired_rate *1.2:
+            color=yellow
+        else:
+            color=green
+            
+        status = BTClient.STATE_STR[s.state]
+        print '\r%.2f%% (of %.1fMB) (down: %s%.1f kB/s\033[39m(need %.1f) up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
+            (s.progress * 100, s.total_wanted/1048576.0, 
+             color, s.download_rate / 1000, s.desired_rate/1000.0 if s.desired_rate else 0.0,
+             s.upload_rate / 1000, \
+            s.num_seeds, s.num_complete, s.num_peers, s.num_incomplete, status),
+        sys.stdout.write("\033[K")
+        sys.stdout.flush()
+        
+    def debug_download_queue(self,s,client):
+        if s.state!= 3:
+            return
+        download_queue=self._th.get_download_queue()
+        if self.file:
+            first=self.file.first_piece
+        else:
+            first=0
+        q=map(lambda x: x['piece_index']+first,download_queue)
+        logger.debug('Download queue: %s', q)
+    
+    def debug_alerts(self,type, alert):
+        logger.debug("Alert %s - %s", type, alert)
                    
                 
             
-    class Monitor(BaseMonitor): 
-        def __init__(self, client):
-            super(BTClient.Monitor,self).__init__(client, name="Torrent Status Monitor" )
-            self._rate=None
-             
-        def set_desired_rate(self, val):
-            self._rate=val
-                
-        def run(self):
-            if not self._th:
-                raise Exception('Invalid state, th is not initialized') 
-    
-            while (self._running):
-                s = self._th.status()
-                s.desired_rate=self._rate
-                    
-                with self._lock:
-                    for cb in self._listeners:
-                        cb(s, download_queue=self._th.get_download_queue(), ctx=self._ctx)
-                self._wait_event.wait(1.0)
 
-
-
-        
-        
-
-    
-class PieceCache(object):
-    TIMEOUT=30
-    size=5
-    def __init__(self, btfile):   
-        #self._btfile=btfile
-        self._cache=[None] * self.size
-        self._lock=Lock()
-        self._event=Event()
-        self._cache_first=btfile.first_piece
-        self._piece_size= btfile.piece_size
-        self._map_offset = btfile.map_piece
-        self._file_size = btfile.size
-        self._last_piece = btfile.last_piece
-        self._request_piece=btfile.prioritize_piece
-        self._btfile=btfile
-    
-    def clone(self):
-        c=PieceCache(self._btfile)
-        with self._lock:
-            c._cache=copy.copy(self._cache)
-            c._cache_first=self._cache_first
-        return c
-    
-    @property
-    def cached_piece(self):
-        self._cache_first
-        
-    def fill_cache(self, first):
-        with self._lock:
-            diff=first-self._cache_first
-            if diff>0:
-                for i in xrange(self.size):
-                    if i+diff < self.size:
-                        self._cache[i]=self._cache[i+diff]
-                    else:
-                        self._cache[i]=None
-                        
-            elif diff<0:
-                for i in xrange(self.size-1, -1,-1):
-                    if i+diff>=0:
-                        self._cache[i]=self._cache[i+diff]
-                    else:
-                        self._cache[i]=None
-                        
-            self._cache_first=first
-            self._event.clear()
-            for i in xrange(self.size):
-                if self._cache[i] is None and (self._cache_first+i) <= self._last_piece:
-                    self._request_piece(self._cache_first+i, i)
-                    
-                    
-    def add_piece(self, n, data):
-        with self._lock:
-            i=n-self._cache_first
-            if i>=0 and i<self.size:
-                self._cache[i]=data
-                if i==0:
-                    self._event.set()
-            
-        
-    def has_piece(self,n):  
-        with self._lock:
-            i=n-self._cache_first
-            if i>=0 and i<self.size:
-                return not (self._cache[i] is None)
-    
-    def _wait_piece(self,pc_no):
-        while not self.has_piece(pc_no):
-            self.fill_cache(pc_no)
-            #self._event.clear()
-            logger.debug('Waiting for piece %d'%pc_no)
-            self._event.wait(self.TIMEOUT)
-            
-    def _get_piece(self,n):
-        with self._lock:
-            i = n-self._cache_first
-            if i < 0 or i >self.size:
-                raise ValueError('index of of scope of current cache')
-            return self._cache[i]
               
-    def get_piece(self,n):
-        self._wait_piece(n)
-        return self._get_piece(n)
-            
-        
-    def read(self, offset, size):
-        size = min(size, self._file_size - offset)
-        if not size:
-            return
-        
-        pc_no,ofs=self._map_offset(offset)    
-        data=self.get_piece(pc_no)
-        pc_size=self._piece_size-ofs
-        if pc_size>size:
-            return data[ofs: ofs+size]
-        else:
-            pieces=[data[ofs:self._piece_size]]
-            remains=size-pc_size
-            new_head=pc_no+1
-            while remains and self.has_piece(new_head):
-                sz=min(remains, self._piece_size)
-                data=self.get_piece(new_head)
-                pieces.append(data[:sz])
-                remains-=sz
-                if remains:
-                    new_head+=1
-            self.fill_cache(new_head)
-            return ''.join(pieces)
-    
-             
-class BTCursor(object):  
-    def __init__(self, btfile):  
-        self._btfile=btfile
-        self._pos=0
-        self._cache=PieceCache(btfile)
-        
-    def clone(self):
-        c=BTCursor(self._btfile)
-        c._cache=self._cache.clone()
-        return c
-        
-    def close(self):
-        self._btfile.remove_cursor(self)
-        
-    def read(self,n=None):
-        sz=self._btfile.size - self._pos
-        if not n:
-            n=sz
-        else:
-            n=min(n,sz)
-        res=self._cache.read(self._pos,n)
-        if res:
-            self._pos+=len(res)
-        return res
-        
-    
-    def seek(self,n):
-        if n>=self._btfile.size:
-            raise ValueError('Seeking beyond file size')
-        elif n<0:
-            raise ValueError('Seeking negative')
-        self._pos=n
-        
-    def tell(self):
-        return self._pos
-        
-    def update_piece(self,n,data):
-        self._cache.add_piece(n,data)
-        
-    def __enter__(self):
-        return self
-    
-    def __exit__(self,exc_type, exc_val, exc_tb):
-        self.close()
-    
-              
-class BTFile(object):     
+class BTFile(AbstractFile):     
     def __init__(self, path, base, index, size, fmap, piece_size, prioritize_fn):
-        self._base=base
-        self.path=path
-        self.size=size
-        self.piece_size=piece_size
+        AbstractFile.__init__(self, path, base, size, piece_size)
         self.index=index
         self.first_piece=fmap.piece
         self.last_piece=self.first_piece + (size+fmap.start) // piece_size
         self.offset=fmap.start
-        self._full_path= os.path.join(base,path)
-        self._cursors=[]
         self._prioritize_fn=prioritize_fn
-        self._lock=Lock()
-        self._duration=None
-        self._rate=None
-        self._piece_duration=None
-        self._cursors_history=deque(maxlen=3)
-        
-    
-    def add_cursor(self,c):
-        with self._lock:
-            self._cursors.append(c)
-        
-    def remove_cursor(self, c):
-        with self._lock:
-            self._cursors.remove(c)
-            self._cursors_history.appendleft(c)
-        
-    def create_cursor(self, expected_offset=None):
-        c=None
-        if expected_offset is not None:
-            with self._lock:
-                for e in reversed(self._cursors):
-                    if abs(e.tell()-expected_offset)< self.piece_size:
-                        c=e.clone()
-                        logger.debug('Cloning existing cursor')
-                        break
-            if not c:        
-                with self._lock:
-                    for e in reversed(self._cursors_history):
-                        if abs(e.tell()-expected_offset)< self.piece_size:
-                            c=e
-                            logger.debug('Reusing previous cursor')
-        if not c:                
-            c = BTCursor(self)  
-        self.add_cursor(c)
-        return c
-    
-    def map_piece(self, ofs):
-        return  self.first_piece+ (ofs+self.offset) // self.piece_size , \
-                self.first_piece+ (ofs+self.offset) % self.piece_size
+       
                 
     def prioritize_piece(self, n, idx):  
         self._prioritize_fn(n,idx)       
-        
-    @property
-    def full_path(self):
-        return self._full_path    
-        
-    @property    
-    def duration(self):
-        if not self._duration:
-            self._duration= get_duration(self._full_path)
-        return self._duration
-    
-    @property
-    def piece_duration_ms(self):
-        if not self._piece_duration:
-            if self.byte_rate:
-                self._piece_duration=self.piece_size/ self.byte_rate / 1000
-                
-        return self._piece_duration
-    
-    @property    
-    def byte_rate(self):
-        if not self._rate:
-            d=self.duration
-            if d:
-                self._rate= self.size / d.total_seconds()
-        return self._rate
-            
-    def remove(self):
-        os.unlink(self._full_path)
-        
-    def update_piece(self, n, data):
-        for c in self._cursors:
-            c.update_piece(n,data)
-        
-    
-    def __str__(self):
-        return self._full_path
-        
-          
-                
-                
-state_str = ['queued', 'checking', 'downloading metadata', \
-                    'downloading', 'finished', 'seeding', 'allocating', 'checking fastresume']    
-def print_status(s,download_queue, ctx):
-    color=''
-    default='\033[39m'
-    green='\033[32m'
-    red='\033[31m'
-    yellow='\033[33m'
-    if s.progress >=1.0 or not s.desired_rate or s.state > 3:
-        color=default
-    elif s.desired_rate > s.download_rate:
-        color=red
-    elif s.download_rate > s.desired_rate and s.download_rate < s.desired_rate *1.2:
-        color=yellow
-    else:
-        color=green
-        
-    status = state_str[s.state]
-    print '\r%.2f%% (of %.1fMB) (down: %s%.1f kB/s\033[39m(need %.1f) up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
-        (s.progress * 100, s.total_wanted/1048576.0, 
-         color, s.download_rate / 1000, s.desired_rate/1000.0 if s.desired_rate else 0.0,
-         s.upload_rate / 1000, \
-        s.num_seeds, s.num_complete, s.num_peers, s.num_incomplete, status),
-    sys.stdout.write("\033[K")
-    sys.stdout.flush()
 
-def debug_download_queue(s,download_queue,ctx):
-    if s.state!= 3:
-        return
-    if ctx.has_key('file'):
-        first=ctx['file'].first_piece
-    else:
-        first=0
-    q=map(lambda x: x['piece_index']+first,download_queue)
-    logger.debug('Download queue: %s', q)
-    
-def debug_alerts(type, alert):
-    logger.debug("Alert %s - %s", type, alert)
-    
+
 def print_file(f):
     print '\nFile %s (%.1fkB) is ready' %(f.path, f.size/1000.0)
     
@@ -788,7 +446,7 @@ class LangAction(argparse.Action):
     
 def main(args=None):
     p=argparse.ArgumentParser()
-    p.add_argument("torrent", help="Torrent file, link to file or magnet link")
+    p.add_argument("url", help="Torrent file, link to file or magnet link")
     p.add_argument("-d", "--directory", default="./", help="directory to save download files")
     p.add_argument("-p", "--player", default="mplayer", choices=["mplayer","vlc"], help="Video player")
     p.add_argument("--port", type=int, default=5001,help="Port for http server")
@@ -808,19 +466,15 @@ def main(args=None):
         logger.addHandler(logging.StreamHandler())
     if args.print_pieces:
         print_pieces(args) 
-    else:   
-        stream(args)
-
-
+    elif re.match('https?://localhost', args.url):  
+        stream(args, HTClient)
+    else: 
+        stream(args, BTClient)
 
         
-def stream(args):
-    c= BTClient(args.directory)
+def stream(args, client_class):
+    c= client_class(args.directory, args=args)
     try:
-        c.add_monitor_listener(print_status)
-        if args.debug_log:
-            c.add_monitor_listener(debug_download_queue)
-            c.add_dispatcher_listener(debug_alerts)
             
         player=None
         if  not args.stream:
@@ -862,7 +516,7 @@ def stream(args):
             c.set_on_file_ready(print_url)
             
         logger.debug('Starting torrent client - libtorrent version %s', lt.version)
-        c.start_torrent(args.torrent)
+        c.start_url(args.url)
         while not c.is_file_ready:
             time.sleep(1)
         if not args.stdin or hasattr(args, 'play_file') and args.play_file:
@@ -899,7 +553,7 @@ def stream(args):
             logger.debug("Player output:\n %s", player.log)
     finally:
         c.close()
-        logger.debug("Remaining threads %s", list(threading.enumerate()))
+        #logger.debug("Remaining threads %s", list(threading.enumerate()))
     
 
 def pieces_map(pieces, w):
@@ -923,7 +577,7 @@ def print_pieces(args):
     def w(x):
         sys.stdout.write(x)
     c= BTClient(args.directory)
-    c.start_torrent(args.torrent)
+    c.start_url(args.url)
     #c.add_listener(print_status)
     start = time.time()
     while time.time()-start<60:
