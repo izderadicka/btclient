@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-__version__='0.3.4'
+__version__='0.4.0'
 
 import libtorrent as lt
 import time
@@ -24,8 +24,6 @@ from player import Player
 from common import AbstractFile, Hasher, BaseMonitor, BaseClient, Resolver
 from htclient import HTClient
 import plugins  # @UnresolvedImport
-import subprocess
-import threading
 
 logger=logging.getLogger()
 
