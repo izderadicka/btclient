@@ -291,6 +291,7 @@ class HTClient(BaseClient):
             self._on_ready_action(self._file, complete)
         
     def start_url(self, uri):
+        self._monitor.start()
         path=urlparse.urlsplit(uri)[2]
         if path.startswith('/'):
             path=path[1:]
@@ -319,7 +320,7 @@ class HTClient(BaseClient):
                     self._pool.add_piece(i)
             
         self.hash=Hasher(self._file, self._on_file_ready)
-        self._monitor.start()
+        
             
     @property
     def is_file_complete(self):
@@ -346,7 +347,8 @@ class HTClient(BaseClient):
         threads=self._no_threads
         desired_rate= self._file.byte_rate if self._file else 0
         
-        self._last_downloaded.append((tick, downloaded))
+        if self.file:
+            self._last_downloaded.append((tick, downloaded))
         return HTClient.Status(state,downloaded, download_rate, total_size,threads,desired_rate)
         
     

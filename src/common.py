@@ -417,6 +417,7 @@ class AbstractFile(object):
             d=self.duration
             if d:
                 self._rate= self.size / d.total_seconds()
+        return self._rate
                 
 class Resolver(object):
     URL_PATTERN=None
