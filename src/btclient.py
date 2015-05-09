@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-__version__='0.3.3'
+__version__='0.3.4'
 
 import libtorrent as lt
 import time
@@ -18,14 +18,14 @@ import urllib
 import SocketServer
 import socket
 import pprint
-from opensubtitle import OpenSubtitles
 import pickle
-from _collections import deque
 from cache import Cache
 from player import Player
-import threading
-from common import AbstractFile, Hasher, BaseMonitor, BaseClient
+from common import AbstractFile, Hasher, BaseMonitor, BaseClient, Resolver
 from htclient import HTClient
+import plugins  # @UnresolvedImport
+import subprocess
+import threading
 
 logger=logging.getLogger()
 
@@ -115,7 +115,7 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
     def _file_info(self):
         size=self.server.file.size
         ext=os.path.splitext(self.server.file.path)[1]
-        mime=VIDEO_EXTS.get(ext)
+        mime=(self.server.file.mime if hasattr(self.server.file,'mime')  else None) or VIDEO_EXTS.get(ext)
         if not mime:
             mime='application/octet-stream'
         return size,mime
@@ -173,7 +173,8 @@ class BTClient(BaseClient):
                  args=None,
                  port_min= 6881, 
                  port_max=6891,
-                 state_file="~/.btclient_state"):
+                 state_file="~/.btclient_state",
+                 **kwargs):
         super(BTClient,self).__init__(path_to_store)
         self._torrent_params={'save_path':path_to_store,
                               'storage_mode':lt.storage_mode_t.storage_mode_sparse
@@ -467,13 +468,20 @@ def main(args=None):
     if args.print_pieces:
         print_pieces(args) 
     elif re.match('https?://localhost', args.url):  
-        stream(args, HTClient)
+        class TestResolver(Resolver):
+            SPEED_LIMIT=300
+            THREADS=2
+        stream(args, HTClient,TestResolver)
     else: 
-        stream(args, BTClient)
+        rclass=plugins.find_matching_plugin(args.url)
+        if rclass:
+            stream(args,HTClient, rclass)
+        else:
+            stream(args, BTClient)
 
         
-def stream(args, client_class):
-    c= client_class(args.directory, args=args)
+def stream(args, client_class, resolver_class=None):
+    c= client_class(args.directory, args=args, resolver_class=resolver_class)
     try:
             
         player=None
@@ -513,6 +521,16 @@ def stream(args, client_class):
                 base='http://127.0.0.1:'+ str(args.port)+'/'
                 url=urlparse.urljoin(base, f.path)
                 print "\nServing file on %s" % url
+#                 ofs=c.file.size- 4*2*1024*1024
+#                 f=c.file.create_cursor(ofs)
+#                 print "\nReading from offset %d"%ofs
+#                 while True:
+#                     p=f.read(1024)
+#                     if not p:
+#                         break
+#                 print "\nRead tail, launch player from %s" %threading.current_thread().name  
+#                 
+                #subprocess.Popen('agave', shell=False, close_fds=True)
             c.set_on_file_ready(print_url)
             
         logger.debug('Starting torrent client - libtorrent version %s', lt.version)

@@ -8,7 +8,7 @@ from threading import Thread
 import time
 from htclient import HTTPLoader,Pool, HTFile
 from btclient import StreamServer, BTFileHandler
-from _imaging import path
+from common import Resolver
 import os
 from StringIO import StringIO
 import tempfile
@@ -26,6 +26,9 @@ class DummyFile(object):
         if offset:
             f.seek(offset)
         return f
+    
+class MyResolver(Resolver):
+    SPEED_LIMIT=2000
 
 class Test(unittest.TestCase):
 
@@ -58,7 +61,11 @@ class Test(unittest.TestCase):
         tmp_file=tempfile.mktemp()
         base,tmp_file=os.path.split(tmp_file)
         htfile=HTFile(tmp_file, base, f.size, piece_size, lambda a,b: self.fail('Should not need prioritize'))
-        pool=Pool(piece_size, [c,HTTPLoader(URL, 1),HTTPLoader(URL, 2)], htfile.update_piece)
+        pool=Pool(piece_size, [c], htfile.update_piece, speed_limit=MyResolver.SPEED_LIMIT)
+        def gen_loader(url,i):
+            return HTTPLoader(url, i)
+        for i in xrange(1,3):
+            pool.add_worker_async(i, gen_loader, (URL,i))
         for i in xrange(last_piece+1):
             pool.add_piece(i, 10-i)
         while not htfile.is_complete:

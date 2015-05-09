@@ -78,7 +78,6 @@ class Player(object):
         self._log = Player.Log(self._proc)
             
     def start(self, f, base, stdin, sub_lang=None, start_time=None):
-        null_dev= open(os.devnull, 'w')
         env=self.modify_env()
         params=[self._player,]
         params.extend(self._player_options)
@@ -96,11 +95,12 @@ class Player(object):
             if not base.endswith(os.sep):
                 base+=os.sep
             params.append(urlparse.urljoin(base, f.path))
-            sin=None
+            sin=open(os.devnull, 'w')
         self._proc=subprocess.Popen(params, 
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
                                     env=env, 
-                                    stdin=sin)
+                                    stdin=sin,
+                                    close_fds=True)
         self.start_log()
         self._started.set()
     
@@ -202,7 +202,10 @@ class MPlayer(Player):
         def run(self):
             while self._live():
                 self._pipe.write('get_time_pos\n')
-                self._pipe.flush()
+                try:
+                    self._pipe.flush()
+                except IOError:
+                    pass
                 time.sleep(1)
             try:
                 self._pipe.close()

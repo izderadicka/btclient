@@ -11,6 +11,7 @@ import tempfile
 import time
 import random
 from time import sleep
+import shutil
 test_file='test_file.py'
 from threading import Thread
 from Queue import Queue
@@ -64,9 +65,12 @@ class Test(unittest.TestCase):
         f.write(s)
         self.fname= f.name
         f.close()
+        self.base=tempfile.mkdtemp()
+        self.tname="test123"
 
     def tearDown(self):
         os.remove(self.fname)   
+        shutil.rmtree(self.base)
         
         
     
@@ -74,7 +78,7 @@ class Test(unittest.TestCase):
     def test_read(self, delay=0.001, piece_size=1024, read_block=2000):
         size=TEST_FILE_SIZE 
         client=DummyClient(self.fname, delay)
-        bt = HTFile(self.fname, './', size, piece_size, client.request)
+        bt = HTFile(self.tname, self.base, size, piece_size, client.request)
         client.serve(bt)
         buf=StringIO()
         c=bt.create_cursor()
@@ -103,6 +107,7 @@ class Test(unittest.TestCase):
         self.assertEqual(len(ref), len(buf.getvalue()))
         self.assertEqual(ref, buf.getvalue())
         c.close()
+        bt.close()
         
     
         
@@ -117,7 +122,7 @@ class Test(unittest.TestCase):
         size=TEST_FILE_SIZE 
         
         client=DummyClient(self.fname)
-        bt = HTFile(self.fname, './', size, 512, client.request)
+        bt = HTFile(self.tname, self.base, size, 512, client.request)
         client.serve(bt)
         buf=StringIO()
         c=bt.create_cursor()
@@ -135,13 +140,38 @@ class Test(unittest.TestCase):
         self.assertEqual(len(ref), len(buf.getvalue()))
         self.assertEqual(ref, buf.getvalue())
         c.close()
+        return bt
     
+    def test_reopen(self):
+        bt=self.test_seek()
+        bt.close()
+        size=TEST_FILE_SIZE 
+        def no(a,b):
+            raise Exception('Should not be called!')
+        bt = HTFile(self.tname, self.base, size, 512, no)  
+        buf=StringIO()
+        c=bt.create_cursor()
+        c.seek(555)
+        while True:
+            sz=1024
+            res=c.read(sz)
+            if res:
+                buf.write(res)
+            else:
+                break
+        with open(self.fname, 'rb') as f:
+            f.seek(555)
+            ref=f.read(size)
+        self.assertEqual(len(ref), len(buf.getvalue()))
+        self.assertEqual(ref, buf.getvalue())
+        c.close()
+        
         
     def test_seek2(self):
         size=TEST_FILE_SIZE 
        
         client=DummyClient(self.fname)
-        bt = HTFile(self.fname, './', size, 768, client.request)
+        bt = HTFile(self.tname, self.base, size, 768, client.request)
         client.serve(bt)
         c=bt.create_cursor()
         c.seek(555)
@@ -189,7 +219,7 @@ class Test(unittest.TestCase):
         size=TEST_FILE_SIZE 
                 
         client=DummyClient(self.fname)
-        bt = HTFile(self.fname, './', size, 512, client.request)
+        bt = HTFile(self.tname, self.base, size, 512, client.request)
         client.serve(bt)
         c=bt.create_cursor()
         c.seek(5000)

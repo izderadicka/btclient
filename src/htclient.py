@@ -7,7 +7,7 @@ Created on May 3, 2015
 import urllib2
 import os.path
 import pickle
-from common import AbstractFile, BaseClient, Hasher
+from common import AbstractFile, BaseClient, Hasher, Resolver
 import logging
 from cookielib import CookieJar
 from collections import namedtuple
@@ -22,27 +22,43 @@ from threading import Lock, Thread
 import urlparse
 import sys
 import threading
+from urllib import urlencode
+from bs4 import BeautifulSoup
+import zlib
+from io import BytesIO
+import gzip
+import json
+import shutil
+from matplotlib.testing.jpl_units.Duration import Duration
+from collections import deque
 
 logger=logging.getLogger('htclient')
 
 Piece=namedtuple('Piece', ['piece','data','total_size', 'type'])
+
 
 class HTTPLoader(object):
     
     UA_STRING=['Mozilla/5.0 (Windows NT 6.3; rv:36.0) Gecko/20100101 Firefox/36.0',
                'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2227.0 Safari/537.36',
                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.75.14 (KHTML, like Gecko) Version/7.0.3 Safari/7046A194A']
+    
+    PARSER='lxml'#'html5lib'#'html.parser'#'lxml'
     class Error(Exception):
         pass
-    def __init__(self,url,id):
+    def __init__(self,url,id, resolver_class=None):
+        resolver_class=resolver_class or Resolver
         self._client=urllib2.build_opener(urllib2.HTTPCookieProcessor(CookieJar()))
-        self.url=self.resolve_file_url(url)
+        self.url=self.resolve_file_url(resolver_class, url)
+        if not self.url:
+            raise HTTPLoader.Error('Urlwas not resolved to file link')
         self.id=id
         self.user_agent=self._choose_ua()
         
         
-    def resolve_file_url(self, url):
-        return url
+    def resolve_file_url(self, resolver_class, url):
+        r=resolver_class(self)
+        return r.resolve(url)
         
     def _choose_ua(self):
         return HTTPLoader.UA_STRING[random.randint(0,len(HTTPLoader.UA_STRING)-1)]
@@ -55,26 +71,31 @@ class HTTPLoader(object):
             raise HTTPLoader.Error('Invalid range header')
         return int(m.group(1)), int(m.group(2)), int(m.group(3))
     
-    def load_piece(self, piece_no, piece_size):
-        start=piece_no*piece_size
-        headers={'User-Agent':self.user_agent,
-                 'Range': 'bytes=%d-'%start}
-        req=urllib2.Request(self.url, headers=headers)
+    def open(self, url, data=None, headers={}, method='get' ):
+        url,post_args=self._encode_data(url, data, method)
+        req=urllib2.Request(url,post_args,headers=headers)
         res=None
-        retries=2
+        retries=5
         while retries:   
             try:
                 res=self._client.open(req, timeout=10)
                 break
             except (IOError, urllib2.HTTPError, BadStatusLine, IncompleteRead, socket.timeout) as e:
                 if isinstance(e, urllib2.HTTPError) and hasattr(e,'code') and str(e.code)=='404':
-                    raise HTTPLoader.Error('Url %s not found'%self.url)
+                    raise HTTPLoader.Error('Url %s not found',url)
         
-                logging.warn('IO or HTTPError (%s) while trying to get url %s, will retry ' % (str(e),self.url))
+                logging.warn('Retry on (%s)  due to IO or HTTPError (%s) ', threading.current_thread().name,e)
                 retries-=1
                 time.sleep(1)
         if not res:
-            raise HTTPLoader.Error('Cannot load resource %s' % self.url)
+            raise HTTPLoader.Error('Cannot open resource %s' % url)
+        return res
+    
+    def load_piece(self, piece_no, piece_size):
+        start=piece_no*piece_size
+        headers={'User-Agent':self.user_agent,
+                 'Range': 'bytes=%d-'%start}
+        res=self.open(self.url, headers=headers)
         allow_range_header=res.info().getheader('Accept-Ranges')
         if allow_range_header and allow_range_header.lower()=='none':
             raise HTTPLoader.Error('Ranges are not supported')
@@ -100,6 +121,52 @@ class HTTPLoader(object):
         
         res.close()
         return Piece(piece_no,data,size,type_header)
+    @staticmethod
+    def decode_data(res):
+        header=res.info()
+        data=res.read()
+        if header.get('Content-Encoding')=='gzip':
+            tmp_stream=gzip.GzipFile(fileobj=BytesIO(data))
+            data=tmp_stream.read()
+            
+        elif header.get('Content-Encoding')=='deflate':
+            data = zlib.decompress(data)
+        return data
+    
+    def _encode_data(self,url, data, method='post'):
+        if not data:
+            return url,None
+        if method.lower()== 'post':
+            return url, urlencode(data)
+        else:
+            return url+'?'+urlencode(data), None
+        
+    def load_page(self, url, data=None, method='get'):
+        res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate"}, method=method)
+        #Content-Type:"text/html; charset=utf-8"
+        type_header=res.info().getheader('Content-Type')
+        if not type_header.startswith('text/html'):
+            raise HTTPLoader.Error("%s is not HTML page"%url)
+        #Content-Encoding:"gzip"
+        data=HTTPLoader.decode_data(res)
+        pg=BeautifulSoup(data, HTTPLoader.PARSER)
+        return pg
+    
+    def load_json(self,url,data,method='get'):
+        res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate"}, method=method)
+        type_header=res.info().getheader('Content-Type')
+        if not type_header.startswith('application/json'):
+            raise HTTPLoader.Error("%s is not JSON"%url)
+        #Content-Encoding:"gzip"
+        data=HTTPLoader.decode_data(res)
+        return json.loads(data,encoding='utf8')
+    
+    def get_redirect(self,url,data,method='get'):
+        pass
+        
+        
+        
+        
                                           
 
 class PriorityQueue(Queue.PriorityQueue):
@@ -142,9 +209,10 @@ class PriorityQueue(Queue.PriorityQueue):
         
         
 class Pool(object):
-    def __init__(self, piece_size,loaders, cb):
+    def __init__(self, piece_size,loaders, cb, speed_limit=None):
         self.piece_size=piece_size
         self._cb=cb
+        self.speed_limit=speed_limit
         self._queue=PriorityQueue()
         self._running=True
         self._threads=[Thread(name="worker %d"%i, target=self.work, args=[l]) for i,l in enumerate(loaders)]
@@ -152,14 +220,35 @@ class Pool(object):
             t.daemon=True
             t.start()
         
-            
+    def add_worker_async(self, id, gen_fn, args=[], kwargs={}):  
+        def resolve():
+            l=gen_fn(*args, **kwargs) 
+            t=Thread(name="worker %d"%id, target=self.work, args=[l])
+            t.daemon=True
+            t.start()
+            self._threads.append(t)
+        adder=Thread(name="Adder", target=resolve)
+        adder.daemon=True
+        adder.start()
+        
     def work(self, loader):
         while self._running:
             pc=self._queue.get_piece()
             if not self._running:
                 break
-            p=loader.load_piece(pc,self.piece_size)
-            self._cb(p.piece,p.data)
+            try:
+                start=time.time()
+                p=loader.load_piece(pc,self.piece_size)
+                self._cb(p.piece,p.data)
+                if self.speed_limit:
+                    dur=time.time()-start
+                    expected=self.piece_size/1024.0/self.speed_limit
+                    wait_time=expected-dur
+                    if wait_time>0:
+                        logger.debug('Waiting %f on %s',wait_time, threading.current_thread().name)
+                        time.sleep(wait_time)
+            except Exception,e:
+                logger.error('(%s)Error when loading piece %d: %s', threading.current_thread().name,pc,e)
             
     def stop(self):
         self._running=False
@@ -172,29 +261,62 @@ class Pool(object):
             
             
 class HTClient(BaseClient):
-    def __init__(self, path_to_store, args=None,piece_size=2*1024*1024,no_threads=3):
+    def __init__(self, path_to_store, args=None,piece_size=2*1024*1024,no_threads=2,resolver_class=None):
         BaseClient.__init__(self, path_to_store)
         self._pool=None
         self._no_threads=no_threads
         self.piece_size=piece_size
-        self._last_downloaded=None
+        self._last_downloaded=deque(maxlen=60)
+        self.resolver_class=resolver_class
     
     def update_piece(self,piece, data):
         self._file.update_piece(piece, data)
+        if not self._ready and all(self._file.pieces[:5]):
+            self._set_ready(self._file.is_complete)
+        
+    def request_piece(self, piece, priority):
+        if self._pool:
+            self._pool.add_piece(piece,priority)
+        else:
+            raise Exception('Pool not started')
+        
+    def _on_file_ready(self, filehash):
+        self._file.filehash=filehash
+        if self.is_file_complete:
+            self._set_ready( True)
+                
+    def _set_ready(self, complete):
+        self._ready=True
+        if self._on_ready_action:
+            self._on_ready_action(self._file, complete)
         
     def start_url(self, uri):
-        c0=HTTPLoader(uri, 0)
-        p=c0.load_piece(0, self.piece_size)
         path=urlparse.urlsplit(uri)[2]
         if path.startswith('/'):
             path=path[1:]
-        self._pool=Pool(self.piece_size, [c0]+[HTTPLoader(uri,i) for i in xrange(1,self._no_threads)],
-                         self.update_piece)
+        c0=None
+        try:
+            self._file=HTFile(path, self._base_path, 0, self.piece_size, self.request_piece)
+        except HTFile.UnknownSize:
+            c0=HTTPLoader(uri, 0, self.resolver_class)
+            p=c0.load_piece(0, self.piece_size)
+            self._file=HTFile(path, self._base_path, p.total_size, self.piece_size, self.request_piece)
+            self.update_piece(0, p.data)
+            self._file.mime=p.type
         
-        self._file=HTFile(path, self._base_path, p.total_size, self.piece_size, self._pool.add_piece)
-        self.update_piece(0, p.data)
-        for i in xrange(1, self._file.last_piece+1):
-            self._pool.add_piece(i)
+                    
+        if not self._file.is_complete:
+            c0=c0 or HTTPLoader(uri, 0, self.resolver_class)
+            self._pool=Pool(self.piece_size, [c0],
+                         self.update_piece, speed_limit=self.resolver_class.SPEED_LIMIT if hasattr(self.resolver_class,'SPEED_LIMIT') else None)
+            def gen_loader(i):
+                return HTTPLoader(uri,i,self.resolver_class)
+            for i in xrange(1,self.resolver_class.THREADS if hasattr(self.resolver_class,'THREADS') else None or self._no_threads):
+                self._pool.add_worker_async(i, gen_loader, (i,))
+            #get remaining pieces with normal priority
+            for i in xrange(1, self._file.last_piece+1):
+                if not self._file.pieces[i]:
+                    self._pool.add_piece(i)
             
         self.hash=Hasher(self._file, self._on_file_ready)
         self._monitor.start()
@@ -215,12 +337,16 @@ class HTClient(BaseClient):
         
         state='starting' if not self.file else 'finished' if self.is_file_complete else 'downloading'
         downloaded=self.file.downloaded if self.file else 0
-        download_rate= (downloaded - self._last_downloaded[1]) / (tick-self._last_downloaded[0]) if self._last_downloaded else 0
+        if self._last_downloaded:
+            prev_time,prev_down = self._last_downloaded[0]
+            download_rate= (downloaded - prev_down) / (tick-prev_time) 
+        else:
+            download_rate=0
         total_size=self.file.size if self.file else 0
         threads=self._no_threads
         desired_rate= self._file.byte_rate if self._file else 0
         
-        self._last_downloaded=(tick, downloaded)
+        self._last_downloaded.append((tick, downloaded))
         return HTClient.Status(state,downloaded, download_rate, total_size,threads,desired_rate)
         
     
@@ -245,39 +371,55 @@ class HTClient(BaseClient):
 
 class HTFile(AbstractFile):
     def __init__(self, path, base, size, piece_size=2097152, prioritize_fn=None):
-        AbstractFile.__init__(self, path, base, size, piece_size)
+        self._full_path= os.path.join(base,path)
         self._prioritize_fn=prioritize_fn
-        self.pieces=[False for _i in xrange(self.last_piece+1)]
-        if not os.path.exists(self.full_path):
-            self._allocate_file()
-        else:
-            sz=os.stat(self.full_path).st_size
-            if sz==size:
-                #get pieces file
-                pcs_file=self.pieces_index_file
-                if os.access(pcs_file, os.R_OK):
-                    with open(pcs_file,'rb') as f:
-                        pcs=pickle.load(f)
-                    if isinstance(pcs, list) and len(pcs)==self.last_piece+1:
-                        self.pieces=pcs
-                    else:
-                        logger.warn('Invalid pieces file %s',pcs_file)
-            else:
-                logger.warn("Invalid file size: %s", self.full_path)
-                self.remove()
-                self._allocate_file()
-                
+        self.pieces=None
+        self.mime=None
+        size=self._load_cached(size)
+        AbstractFile.__init__(self, path, base, size, piece_size)
+        if not self.pieces or len(self.pieces)!=self.last_piece+1:
+            self.pieces=[False for _i in xrange(self.last_piece+1)]
         self._file=open(self.full_path,'r+b')
+        
+        
+    class UnknownSize(Exception):
+        pass
     
+    def _load_cached(self, size):
+        if not os.path.exists(self.full_path) and size:
+            self._allocate_file(size)
+            return size
+        elif os.path.exists(self.full_path):
+            sz=os.stat(self.full_path).st_size
+            if size and size!=sz:
+                logger.warn('Invalid cached file')
+                self._allocate_file(size)
+                return size
+            pcs_file=self.pieces_index_file
+            if os.access(pcs_file, os.R_OK):
+                with open(pcs_file,'rb') as f:
+                    pcs=pickle.load(f)
+                if isinstance(pcs, tuple): 
+                    self.pieces=pcs[1]
+                    self.mime=pcs[0]
+                else:
+                    logger.warn('Invalid pieces file %s',pcs_file)
+            return sz
+        else:
+            raise HTFile.UnknownSize()
+            
     @property    
     def pieces_index_file(self):
         return self.full_path+'.pieces'
     
                 
-    def _allocate_file(self):
+    def _allocate_file(self, size):
+        path=os.path.split(self.full_path)[0]
+        if not os.path.exists(path):
+            os.makedirs(path, mode=0755)
         #sparecely allocate file 
         with open(self.full_path,'ab') as f:
-            f.truncate(self.size)
+            f.truncate(size)
             
             
     def update_piece(self, n, data):
@@ -328,8 +470,6 @@ class HTFile(AbstractFile):
     def close(self):
         self._file.close()
         with open(self.pieces_index_file, 'wb') as f:
-            pickle.dump(self.pieces,f)
+            pickle.dump((self.mime,self.pieces),f)
             
-    
-        
     

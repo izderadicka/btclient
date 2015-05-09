@@ -15,6 +15,7 @@ from opensubtitle import OpenSubtitles
 import threading
 import traceback
 from cache import Cache
+import time
 
 logger=logging.getLogger('common')
 hachoir_config.quiet = True
@@ -308,8 +309,9 @@ class BTCursor(object):
         
     
     def seek(self,n):
-        if n>=self._btfile.size:
-            raise ValueError('Seeking beyond file size')
+        if n>self._btfile.size:
+            n=self._btfile.size
+            #raise ValueError('Seeking beyond file size')
         elif n<0:
             raise ValueError('Seeking negative')
         self._pos=n
@@ -415,6 +417,15 @@ class AbstractFile(object):
             d=self.duration
             if d:
                 self._rate= self.size / d.total_seconds()
+                
+class Resolver(object):
+    URL_PATTERN=None
+    SPEED_LIMIT=None #kB/s
+    THREADS=4
+    def __init__(self, loader):
+        self._client=loader
+    def resolve(self, url):
+        return url
         return self._rate
             
     

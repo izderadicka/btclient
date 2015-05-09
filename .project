@@ -3,6 +3,7 @@
 	<name>btstream</name>
 	<comment></comment>
 	<projects>
+		<project>adecaptcha</project>
 	</projects>
 	<buildSpec>
 		<buildCommand>
