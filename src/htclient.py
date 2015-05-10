@@ -248,7 +248,7 @@ class Pool(object):
                         logger.debug('Waiting %f on %s',wait_time, threading.current_thread().name)
                         time.sleep(wait_time)
             except Exception,e:
-                logger.error('(%s)Error when loading piece %d: %s', threading.current_thread().name,pc,e)
+                logger.exception('(%s) Error when loading piece %d: %s', threading.current_thread().name,pc,e)
             
     def stop(self):
         self._running=False
@@ -271,7 +271,8 @@ class HTClient(BaseClient):
     
     def update_piece(self,piece, data):
         self._file.update_piece(piece, data)
-        if not self._ready and all(self._file.pieces[:5]):
+        if not self._ready and hasattr(self._file,'filehash') and self._file.filehash \
+            and all(self._file.pieces[:5]):
             self._set_ready(self._file.is_complete)
         
     def request_piece(self, piece, priority):

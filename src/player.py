@@ -95,7 +95,7 @@ class Player(object):
             if not base.endswith(os.sep):
                 base+=os.sep
             params.append(urlparse.urljoin(base, f.path))
-            sin=open(os.devnull, 'w')
+            sin=open(os.devnull, 'rb')
         self._proc=subprocess.Popen(params, 
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
                                     env=env, 
