@@ -21,7 +21,8 @@ import pprint
 import pickle
 from cache import Cache
 from player import Player
-from common import AbstractFile, Hasher, BaseMonitor, BaseClient, Resolver
+from common import AbstractFile, Hasher, BaseMonitor, BaseClient, Resolver,\
+    TerminalColor
 from htclient import HTClient
 import plugins  # @UnresolvedImport
 
@@ -376,18 +377,15 @@ class BTClient(BaseClient):
     
     def print_status(self,s,client):
         color=''
-        default='\033[39m'
-        green='\033[32m'
-        red='\033[31m'
-        yellow='\033[33m'
+        
         if s.progress >=1.0 or not s.desired_rate or s.state > 3:
-            color=default
+            color=TerminalColor.default
         elif s.desired_rate > s.download_rate:
-            color=red
+            color=TerminalColor.red
         elif s.download_rate > s.desired_rate and s.download_rate < s.desired_rate *1.2:
-            color=yellow
+            color=TerminalColor.yellow
         else:
-            color=green
+            color=TerminalColor.green
             
         status = BTClient.STATE_STR[s.state]
         print '\r%.2f%% (of %.1fMB) (down: %s%.1f kB/s\033[39m(need %.1f) up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
@@ -429,9 +427,6 @@ class BTFile(AbstractFile):
     def prioritize_piece(self, n, idx):  
         self._prioritize_fn(n,idx)       
 
-
-def print_file(f):
-    print '\nFile %s (%.1fkB) is ready' %(f.path, f.size/1000.0)
     
 class LangAction(argparse.Action):
     def __init__(self, option_strings, dest, nargs=None, **kwargs):

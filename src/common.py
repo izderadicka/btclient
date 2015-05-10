@@ -20,6 +20,11 @@ import time
 logger=logging.getLogger('common')
 hachoir_config.quiet = True
 
+def enum(**enums):
+    return type('Enum', (), enums)
+
+TerminalColor=enum(default='\033[39m',green='\033[32m', red='\033[31m', yellow='\033[33m')
+
 def get_duration(fn):
     p=createParser(unicode(fn))
     m=extractMetadata(p)

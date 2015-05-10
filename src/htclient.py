@@ -7,7 +7,7 @@ Created on May 3, 2015
 import urllib2
 import os.path
 import pickle
-from common import AbstractFile, BaseClient, Hasher, Resolver
+from common import AbstractFile, BaseClient, Hasher, Resolver, TerminalColor
 import logging
 from cookielib import CookieJar
 from collections import namedtuple
@@ -359,9 +359,18 @@ class HTClient(BaseClient):
             self._file.close()
             
     def print_status(self, s, client):
-        color=''
         progress=s.downloaded / float(s.total_size) * 100if s.total_size else 0
         total_size=s.total_size / 1048576.0
+        
+        color=''
+        if progress >=100.0 or not s.desired_rate or s.state in ('finished', 'starting'):
+            color=TerminalColor.default
+        elif s.desired_rate > s.download_rate:
+            color=TerminalColor.red
+        elif s.download_rate > s.desired_rate and s.download_rate < s.desired_rate *1.2:
+            color=TerminalColor.yellow
+        else:
+            color=TerminalColor.green
         
         print '\r%.2f%% (of %.1fMB) down: %s%.1f kB/s\033[39m(need %.1f)  %s' % \
             (progress, total_size, 
