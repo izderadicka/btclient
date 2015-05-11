@@ -143,6 +143,13 @@ class Player(object):
         else:
             return ""
         
+    def terminate(self):
+        if self._proc:
+            try:
+                self._proc.terminate()
+            except OSError:
+                pass
+        
         
 class MPlayer(Player):
     class Log():

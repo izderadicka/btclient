@@ -25,6 +25,7 @@ from common import AbstractFile, Hasher, BaseMonitor, BaseClient, Resolver,\
     TerminalColor
 from htclient import HTClient
 import plugins  # @UnresolvedImport
+import signal
 
 logger=logging.getLogger()
 
@@ -47,6 +48,16 @@ def parse_range(range):  # @ReservedAssignment
                 pass
     return 0
 
+class Terminated(BaseException):
+    pass
+
+def terminate(sig,frame):
+    e=Terminated('Terminated by signal %d', sig)
+    e.signal=sig
+    raise e
+
+signal.signal(signal.SIGTERM, terminate)
+signal.signal(signal.SIGHUP, terminate)
 
 class StreamServer(SocketServer.ThreadingMixIn, htserver.HTTPServer):
     daemon_threads = True
@@ -514,19 +525,10 @@ def stream(args, client_class, resolver_class=None):
                 base='http://127.0.0.1:'+ str(args.port)+'/'
                 url=urlparse.urljoin(base, f.path)
                 print "\nServing file on %s" % url
-#                 ofs=c.file.size- 4*2*1024*1024
-#                 f=c.file.create_cursor(ofs)
-#                 print "\nReading from offset %d"%ofs
-#                 while True:
-#                     p=f.read(1024)
-#                     if not p:
-#                         break
-#                 print "\nRead tail, launch player from %s" %threading.current_thread().name  
-#                 
-                #subprocess.Popen('agave', shell=False, close_fds=True)
+
             c.set_on_file_ready(print_url)
             
-        logger.debug('Starting torrent client - libtorrent version %s', lt.version)
+        logger.debug('Starting btclient - libtorrent version %s', lt.version)
         c.start_url(args.url)
         while not c.is_file_ready:
             time.sleep(1)
@@ -564,6 +566,8 @@ def stream(args, client_class, resolver_class=None):
             logger.debug("Player output:\n %s", player.log)
     finally:
         c.close()
+        if player:
+            player.terminate()
         #logger.debug("Remaining threads %s", list(threading.enumerate()))
     
 
@@ -606,6 +610,12 @@ def print_pieces(args):
 if __name__=='__main__':
     try:
         main()
+    except KeyboardInterrupt:
+        print >>sys.stderr, '\nProgram interrupted, exiting'
+        logger.info('Exiting by SIGINT')
+    except Terminated,e:
+        print >>sys.stderr, '\nProgram terminated, exiting'
+        logger.info('Exiting by signal %d', e.signal)
     except Exception:
         traceback.print_exc()
         logger.exception('General error')
