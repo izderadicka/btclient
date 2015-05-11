@@ -48,17 +48,6 @@ def parse_range(range):  # @ReservedAssignment
                 pass
     return 0
 
-class Terminated(BaseException):
-    pass
-
-def terminate(sig,frame):
-    e=Terminated('Terminated by signal %d', sig)
-    e.signal=sig
-    raise e
-
-signal.signal(signal.SIGTERM, terminate)
-signal.signal(signal.SIGHUP, terminate)
-
 class StreamServer(SocketServer.ThreadingMixIn, htserver.HTTPServer):
     daemon_threads = True
     def __init__(self, address, handler_class, tfile=None, allow_range=True):
@@ -486,9 +475,19 @@ def main(args=None):
         
 def stream(args, client_class, resolver_class=None):
     c= client_class(args.directory, args=args, resolver_class=resolver_class)
+    player=None
+    def on_exit(sig=None,frame=None):
+        c.close()
+        if player:
+            player.terminate()
+        if sig:    
+            logger.info('Exiting by signal %d', sig)
+            sys.exit(0)
+    signal.signal(signal.SIGHUP, on_exit)
+    signal.signal(signal.SIGTERM, on_exit)
     try:
             
-        player=None
+        
         if  not args.stream:
             player=Player.create(args.player,c.update_play_time)
         
@@ -565,9 +564,7 @@ def stream(args, client_class, resolver_class=None):
         
             logger.debug("Player output:\n %s", player.log)
     finally:
-        c.close()
-        if player:
-            player.terminate()
+        on_exit()
         #logger.debug("Remaining threads %s", list(threading.enumerate()))
     
 
@@ -613,9 +610,6 @@ if __name__=='__main__':
     except KeyboardInterrupt:
         print >>sys.stderr, '\nProgram interrupted, exiting'
         logger.info('Exiting by SIGINT')
-    except Terminated,e:
-        print >>sys.stderr, '\nProgram terminated, exiting'
-        logger.info('Exiting by signal %d', e.signal)
     except Exception:
         traceback.print_exc()
         logger.exception('General error')

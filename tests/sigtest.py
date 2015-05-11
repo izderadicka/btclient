@@ -12,6 +12,7 @@ def write_to_log(msg):
     print >>sys.stderr, msg
         
 def on_signal_exit(sig,frame):
+    time.sleep(5)
     write_to_log('Received signal %d'%sig)
     sys.exit(sig)
     
