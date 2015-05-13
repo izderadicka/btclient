@@ -26,6 +26,7 @@ from common import AbstractFile, Hasher, BaseMonitor, BaseClient, Resolver,\
 from htclient import HTClient
 import plugins  # @UnresolvedImport
 import signal
+import json
 
 logger=logging.getLogger()
 
@@ -50,11 +51,12 @@ def parse_range(range):  # @ReservedAssignment
 
 class StreamServer(SocketServer.ThreadingMixIn, htserver.HTTPServer):
     daemon_threads = True
-    def __init__(self, address, handler_class, tfile=None, allow_range=True):
+    def __init__(self, address, handler_class, tfile=None, allow_range=True, status_fn=None):
         htserver.HTTPServer.__init__(self,address,handler_class)
         self.file=tfile
         self._running=True
         self.allow_range=allow_range
+        self.status_fn=status_fn
         
     def stop(self):
         self._running=False
@@ -121,7 +123,18 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
             
     def do_HEAD(self, only_header=True):
         parsed_url=urlparse.urlparse(self.path)
-        if urllib.unquote_plus(parsed_url.path)=='/'+self.server.file.path:
+        if parsed_url.path=="/status" and self.server.status_fn:
+            s=self.server.status_fn()
+            status=json.dumps(s)
+            self.send_response(200, 'OK')
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', len(status))
+            self._finish_header(only_header)
+            if not only_header:
+                self.wfile.write(status)
+            return False
+            
+        elif urllib.unquote_plus(parsed_url.path)=='/'+self.server.file.path:
             self._offset=0
             size,mime = self._file_info()
             range=None  # @ReservedAssignment
@@ -133,6 +146,7 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
                     logger.debug('Request range %s - (header is %s', range,self.headers.get('Range', None) )
             self.send_resp_header(mime, size, range, only_header)
             return True
+        
         else:
             logger.error('Requesting wrong path %s, but file is %s', parsed_url.path, '/'+self.server.file.path)
             self.send_error(404, 'Not Found')
@@ -158,6 +172,9 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
                 raise ValueError('Invalid range value')
         else:
             self.send_header('Content-Length', cont_length)
+        self._finish_header(only_header)
+            
+    def _finish_header(self, only_header):
         self.send_header('Connection', 'close')    
         if not only_header: self.end_headers()
         
@@ -396,6 +413,31 @@ class BTClient(BaseClient):
         sys.stdout.write("\033[K")
         sys.stdout.flush()
         
+    def get_normalized_status(self):
+        s=self.status
+        size=self._file.size if self._file else 0
+        if self._file:
+            pieces = s.pieces[self._file.first_piece: self._file.last_piece+1]
+            downloaded = reduce(lambda s,x:s+(x and 1 or 0)*self._file.piece_size, pieces[:-1], 0)
+            if pieces[-1]:
+                rem=self._file.size % self._file.piece_size
+                downloaded+=rem if rem else self._file.piece_size
+        return {'source_type':'bittorrent',
+            'state':BTClient.STATE_STR[s.state],
+            'downloaded':downloaded,
+            'total_size':size,
+            'download_rate':s.download_rate,
+            'desired_rate':s.desired_rate, 
+            'piece_size': self._file.piece_size if self._file else 0,
+            'progress': s.progress,
+            #BT specific
+            'seeds_connected': s.num_seeds,
+            'seeds_total': s.num_complete,
+            'peers_connected': s.num_peers,
+            'peers_total': s.num_incomplete,
+            
+            }
+        
     def debug_download_queue(self,s,client):
         if s.state!= 3:
             return
@@ -450,6 +492,7 @@ def main(args=None):
     p.add_argument("-s", "--subtitles", action=LangAction, help="language for subtitle 3 letter code eng,cze ... (will try to get subtitles from opensubtitles.org)")
     p.add_argument("--stream", action="store_true", help="just file streaming, but will not start player")
     p.add_argument("--no-resume", action="store_true",help="Do not resume from last known position")
+    p.add_argument("-q", "--quiet", action="store_true", help="Quiet - did not print progress to stdout")
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)
@@ -493,7 +536,7 @@ def stream(args, client_class, resolver_class=None):
         
         server=None
         if not args.stdin:
-            server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=True)
+            server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=True, status_fn=c.get_normalized_status)
             logger.debug('Started http server on port %d', args.port)
         
         if player:

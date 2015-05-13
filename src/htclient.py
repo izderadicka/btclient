@@ -262,7 +262,7 @@ class Pool(object):
             
 class HTClient(BaseClient):
     def __init__(self, path_to_store, args=None,piece_size=2*1024*1024,no_threads=2,resolver_class=None):
-        BaseClient.__init__(self, path_to_store)
+        BaseClient.__init__(self, path_to_store,args=args)
         self._pool=None
         self._no_threads=no_threads
         self.piece_size=piece_size
@@ -352,7 +352,19 @@ class HTClient(BaseClient):
             self._last_downloaded.append((tick, downloaded))
         return HTClient.Status(state,downloaded, download_rate, total_size,threads,desired_rate)
         
-    
+    def get_normalized_status(self):
+        s=self.status
+        return {'source_type':'http',
+            'state':s.state,
+            'downloaded':s.downloaded,
+            'total_size':s.total_size,
+            'download_rate':s.download_rate,
+            'desired_rate':s.desired_rate, 
+            'piece_size': self._file.piece_size if self._file else 0,
+            'progress': s.downloaded / float(s.total_size) if s.total_size else 0,
+            # HTTP specific
+            'threads': s.threads
+            }
     def close(self):
         BaseClient.close(self)
         if self._file:

@@ -112,7 +112,8 @@ class BaseClient(object):
         self._cache=Cache(path_to_store)
         self._on_ready_action=None
         self._monitor= BaseClient.Monitor(self)
-        self.add_monitor_listener(self.print_status)
+        if not args or not args.quiet:
+            self.add_monitor_listener(self.print_status)
     
     def _on_file_ready(self, filehash):
         self._file.filehash=filehash
@@ -123,6 +124,18 @@ class BaseClient(object):
     @property
     def status(self):
         raise NotImplementedError()
+    
+    def get_normalized_status(self):
+        s=self.status
+        return {'source_type':'base',
+            'state':s.state,
+            'downloaded':s.downloaded,
+            'total_size':s.total_size,
+            'download_rate':s.download_rate,
+            'desired_rate':s.desired_rate, 
+            'progress': s.progress,
+            'piece_size': self._file.piece_size if self._file else 0
+            }
         
     @property
     def file(self):
