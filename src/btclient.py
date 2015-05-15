@@ -567,6 +567,7 @@ def stream(args, client_class, resolver_class=None):
                 base='http://127.0.0.1:'+ str(args.port)+'/'
                 url=urlparse.urljoin(base, f.path)
                 print "\nServing file on %s" % url
+                sys.stdout.flush()
 
             c.set_on_file_ready(print_url)
             

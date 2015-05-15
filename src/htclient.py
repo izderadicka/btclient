@@ -47,14 +47,13 @@ class HTTPLoader(object):
     class Error(Exception):
         pass
     def __init__(self,url,id, resolver_class=None):
+        self.id=id
+        self.user_agent=self._choose_ua()
         resolver_class=resolver_class or Resolver
         self._client=urllib2.build_opener(urllib2.HTTPCookieProcessor(CookieJar()))
         self.url=self.resolve_file_url(resolver_class, url)
         if not self.url:
             raise HTTPLoader.Error('Urlwas not resolved to file link')
-        self.id=id
-        self.user_agent=self._choose_ua()
-        
         
     def resolve_file_url(self, resolver_class, url):
         r=resolver_class(self)
@@ -72,6 +71,8 @@ class HTTPLoader(object):
         return int(m.group(1)), int(m.group(2)), int(m.group(3))
     
     def open(self, url, data=None, headers={}, method='get' ):
+        hdr={'User-Agent':self.user_agent}
+        hdr.update(headers)
         url,post_args=self._encode_data(url, data, method)
         req=urllib2.Request(url,post_args,headers=headers)
         res=None
@@ -93,8 +94,7 @@ class HTTPLoader(object):
     
     def load_piece(self, piece_no, piece_size):
         start=piece_no*piece_size
-        headers={'User-Agent':self.user_agent,
-                 'Range': 'bytes=%d-'%start}
+        headers={'Range': 'bytes=%d-'%start}
         res=self.open(self.url, headers=headers)
         allow_range_header=res.info().getheader('Accept-Ranges')
         if allow_range_header and allow_range_header.lower()=='none':
@@ -153,7 +153,7 @@ class HTTPLoader(object):
         return pg
     
     def load_json(self,url,data,method='get'):
-        res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate"}, method=method)
+        res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate", 'X-Requested-With':'XMLHttpRequest'}, method=method)
         type_header=res.info().getheader('Content-Type')
         if not type_header.startswith('application/json'):
             raise HTTPLoader.Error("%s is not JSON"%url)
