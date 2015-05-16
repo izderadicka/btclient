@@ -264,10 +264,10 @@ class HTClient(BaseClient):
     def __init__(self, path_to_store, args=None,piece_size=2*1024*1024,no_threads=2,resolver_class=None):
         BaseClient.__init__(self, path_to_store,args=args)
         self._pool=None
-        self._no_threads=no_threads
+        self.resolver_class=resolver_class
+        self._no_threads=self.resolver_class.THREADS if self.resolver_class and hasattr(self.resolver_class,'THREADS') else no_threads
         self.piece_size=piece_size
         self._last_downloaded=deque(maxlen=60)
-        self.resolver_class=resolver_class
     
     def update_piece(self,piece, data):
         self._file.update_piece(piece, data)
@@ -313,7 +313,7 @@ class HTClient(BaseClient):
                          self.update_piece, speed_limit=self.resolver_class.SPEED_LIMIT if hasattr(self.resolver_class,'SPEED_LIMIT') else None)
             def gen_loader(i):
                 return HTTPLoader(uri,i,self.resolver_class)
-            for i in xrange(1,self.resolver_class.THREADS if hasattr(self.resolver_class,'THREADS') else None or self._no_threads):
+            for i in xrange(1,self._no_threads):
                 self._pool.add_worker_async(i, gen_loader, (i,))
             #get remaining pieces with normal priority
             for i in xrange(1, self._file.last_piece+1):

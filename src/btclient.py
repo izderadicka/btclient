@@ -134,7 +134,7 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
                 self.wfile.write(status)
             return False
             
-        elif urllib.unquote_plus(parsed_url.path)=='/'+self.server.file.path:
+        elif self.server.file and urllib.unquote_plus(parsed_url.path)=='/'+self.server.file.path:
             self._offset=0
             size,mime = self._file_info()
             range=None  # @ReservedAssignment
@@ -538,13 +538,12 @@ def stream(args, client_class, resolver_class=None):
         if not args.stdin:
             server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=True, status_fn=c.get_normalized_status)
             logger.debug('Started http server on port %d', args.port)
-        
+            server.run()
         if player:
             def start_play(f, finished):
                 base=None
                 if not args.stdin:
                     server.set_file(f)
-                    server.run()
                     base='http://127.0.0.1:'+ str(args.port)+'/'
                 sin=args.stdin
                 if finished:
@@ -563,7 +562,6 @@ def stream(args, client_class, resolver_class=None):
         else:
             def print_url(f,done):
                 server.set_file(f)
-                server.run()
                 base='http://127.0.0.1:'+ str(args.port)+'/'
                 url=urlparse.urljoin(base, f.path)
                 print "\nServing file on %s" % url
