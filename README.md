@@ -3,7 +3,9 @@ BTClient
 
 Simple Bit Torrent client (command line),  that enables sequential download and then streams video to 
 video player (via http or stdin, but stdin is not seekable) when got enough of the file content to start 
-playback
+playback. Also supports HTTP sources, when it can download video from several connections concurrently 
+and then stream it to player. Can work with file sharing service, if plugin is provided to resolve 
+file link. 
 
 ```
 usage: btclient.py [-h] [-d DIRECTORY] [-p {mplayer,vlc}] [--port PORT]
@@ -12,11 +14,12 @@ usage: btclient.py [-h] [-d DIRECTORY] [-p {mplayer,vlc}] [--port PORT]
                    torrent
 ```
 
-Accepts either torrent file path or magnet link or http(s) link to torrent file.
+Accepts either torrent file path or magnet link or http(s) link to torrent file or http link to file.
 
 From torrent file chooses biggest video file, starts to download and sends it to video player (works with mplayer or vlc)
 
 Requires libtorrent (1.0.4) and its python bindings,  gnome-terminal and hachoir python libraries.
+Optionally  beautifulsoup and adecaptcha for plugins.
 
 
 Install
