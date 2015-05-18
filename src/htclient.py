@@ -7,7 +7,8 @@ Created on May 3, 2015
 import urllib2
 import os.path
 import pickle
-from common import AbstractFile, BaseClient, Hasher, Resolver, TerminalColor
+from common import AbstractFile, BaseClient, Hasher, Resolver, TerminalColor,\
+    PieceCache
 import logging
 from cookielib import CookieJar
 from collections import namedtuple
@@ -32,6 +33,7 @@ import shutil
 from matplotlib.testing.jpl_units.Duration import Duration
 from collections import deque
 
+
 logger=logging.getLogger('htclient')
 
 Piece=namedtuple('Piece', ['piece','data','total_size', 'type'])
@@ -54,6 +56,19 @@ class HTTPLoader(object):
         self.url=self.resolve_file_url(resolver_class, url)
         if not self.url:
             raise HTTPLoader.Error('Urlwas not resolved to file link')
+        self._interrupt=False
+    
+    
+    def interrupt(self):
+        self._interrupt=True
+        
+    class Interrupted(Exception):
+        pass    
+    
+    def _check_interrupt(self):
+        if self._interrupt:
+            self._interrupt=False
+            raise HTTPLoader.Interrupted()  
         
     def resolve_file_url(self, resolver_class, url):
         r=resolver_class(self)
@@ -91,8 +106,9 @@ class HTTPLoader(object):
         if not res:
             raise HTTPLoader.Error('Cannot open resource %s' % url)
         return res
-    
-    def load_piece(self, piece_no, piece_size):
+    BLOCK_SIZE=16*1024
+    def load_piece(self, piece_no, piece_size, speed_limit=None):
+        self._interrupt=False
         start=piece_no*piece_size
         headers={'Range': 'bytes=%d-'%start}
         res=self.open(self.url, headers=headers)
@@ -117,10 +133,28 @@ class HTTPLoader(object):
         if not type_header:
             raise HTTPLoader.Error('Content Type is missing')
         
-        data=res.read(piece_size)
+        buf=bytearray(piece_size)
+        pos=0
+        while pos<piece_size:
+            start=time.time()
+            self._check_interrupt()
+            sz=min(HTTPLoader.BLOCK_SIZE, piece_size-pos)
+            block=res.read(sz)
+            if not block:
+                break
+            buf[pos:len(block)]=block
+            pos+=len(block)
+            
+            if speed_limit and not self._interrupt:
+                dur=time.time()-start
+                expected=len(block)/1024.0/speed_limit
+                wait_time=expected-dur
+                if wait_time>0:
+                    if wait_time>1: logger.debug('LONG Waiting %f on %s',wait_time, threading.current_thread().name)
+                    time.sleep(wait_time)
         
         res.close()
-        return Piece(piece_no,data,size,type_header)
+        return Piece(piece_no,buffer(buf)[0:pos],size,type_header)
     @staticmethod
     def decode_data(res):
         header=res.info()
@@ -209,55 +243,77 @@ class PriorityQueue(Queue.PriorityQueue):
         
         
 class Pool(object):
+    class Worker(Thread):
+        def __init__(self, id, loader, pool):
+            Thread.__init__(self,name="worker %d"%id)
+            self.daemon=True
+            self.id=id
+            self._loader=loader
+            self._queue=pool._queue
+            self.piece_size=pool.piece_size
+            self.speed_limit=pool.speed_limit
+            self._cb=pool._cb
+            self._pool=pool
+            self.piece=None
+            
+            self.start()
+        
+        def interrupt(self):
+            self._loader.interrupt()
+            
+        def run(self):
+            while self._pool._running:
+                self.piece=pc=self._queue.get_piece()
+                if not self._pool._running:
+                    break
+                try:
+                    p=self._loader.load_piece(self.piece,self.piece_size,self.speed_limit)
+                    self.piece=None
+                    self._cb(p.piece,p.data)
+                except HTTPLoader.Interrupted:
+                    logger.debug('Interrupted piece %d by high priority piece',pc)
+                    # returning piece to queue
+                    self._queue.put_piece(self.piece, PriorityQueue.NORMAL_PRIORITY)
+                except Exception,e:
+                    logger.exception('(%s) Error when loading piece %d: %s', threading.current_thread().name,pc,e)
+                    # returning piece to queue
+                    self._queue.put_piece(self.piece, PriorityQueue.NORMAL_PRIORITY)
+                self._queue.task_done()
+            
+            
     def __init__(self, piece_size,loaders, cb, speed_limit=None):
         self.piece_size=piece_size
         self._cb=cb
         self.speed_limit=speed_limit
         self._queue=PriorityQueue()
         self._running=True
-        self._threads=[Thread(name="worker %d"%i, target=self.work, args=[l]) for i,l in enumerate(loaders)]
-        for t in self._threads:
-            t.daemon=True
-            t.start()
+        self._threads=[Pool.Worker(i,l,self) for i,l in enumerate(loaders)]
+        
         
     def add_worker_async(self, id, gen_fn, args=[], kwargs={}):  
         def resolve():
             l=gen_fn(*args, **kwargs) 
-            t=Thread(name="worker %d"%id, target=self.work, args=[l])
-            t.daemon=True
-            t.start()
+            t=Pool.Worker(id,l,self)
             self._threads.append(t)
         adder=Thread(name="Adder", target=resolve)
         adder.daemon=True
         adder.start()
         
-    def work(self, loader):
-        while self._running:
-            pc=self._queue.get_piece()
-            if not self._running:
-                break
-            try:
-                start=time.time()
-                p=loader.load_piece(pc,self.piece_size)
-                self._cb(p.piece,p.data)
-                if self.speed_limit:
-                    dur=time.time()-start
-                    expected=self.piece_size/1024.0/self.speed_limit
-                    wait_time=expected-dur
-                    if wait_time>0:
-                        logger.debug('Waiting %f on %s',wait_time, threading.current_thread().name)
-                        time.sleep(wait_time)
-            except Exception,e:
-                logger.exception('(%s) Error when loading piece %d: %s', threading.current_thread().name,pc,e)
-            
     def stop(self):
         self._running=False
         #push some dummy tasks to assure workers ends
         for i in xrange(len(self._threads)):
             self._queue.put_piece(i, PriorityQueue.NO_DOWNLOAD)
             
-    def add_piece(self, piece, priority=PriorityQueue.NORMAL_PRIORITY, remove_previous=False):
-        self._queue.put_piece(piece, priority, remove_previous)
+    def add_piece(self, piece, priority=PriorityQueue.NORMAL_PRIORITY, urgent=False):
+        #TBD: interrupt one worker for priority 0
+        if urgent:
+            for w in self._threads:
+                # This is pretty poor heuritics
+                if w.piece and w.piece<piece-PieceCache.size or w.piece>piece+PieceCache.size:
+                    logger.debug('Will interrupt piece %d in thread %s', w.piece, threading.current_thread().name)
+                    w.interrupt()
+        self._queue.put_piece(piece, priority)
             
             
 class HTClient(BaseClient):
@@ -275,9 +331,9 @@ class HTClient(BaseClient):
             and all(self._file.pieces[:5]):
             self._set_ready(self._file.is_complete)
         
-    def request_piece(self, piece, priority):
+    def request_piece(self, piece, priority, urgent=False):
         if self._pool:
-            self._pool.add_piece(piece,priority)
+            self._pool.add_piece(piece,priority, urgent)
         else:
             raise Exception('Pool not started')
         
@@ -472,7 +528,7 @@ class HTFile(AbstractFile):
         if data:
             AbstractFile.update_piece(self, piece, data)
         elif self._prioritize_fn:
-            self._prioritize_fn(piece,idx)
+            self._prioritize_fn(piece,idx, idx==0 and piece < self.last_piece-1) #last 2 pieces are special, we do not want them to interrupt other downloads
         else:
             assert False, 'Missing prioritize fn'
             

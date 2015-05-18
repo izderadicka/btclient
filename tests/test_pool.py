@@ -12,6 +12,8 @@ from common import Resolver
 import os
 from StringIO import StringIO
 import tempfile
+import logging
+logging.basicConfig(level=logging.WARN)
 
 PORT = 8000
 URL="http://localhost:%d/breakdance.avi" % PORT
@@ -43,8 +45,6 @@ class Test(unittest.TestCase):
         #self.server.shutdown()
         pass
         
-
-
     def test(self):
         f=DummyFile('breakdance.avi')
         piece_size=1024
