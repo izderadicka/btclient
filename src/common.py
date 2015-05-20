@@ -16,6 +16,8 @@ import threading
 import traceback
 from cache import Cache
 import time
+import shutil
+import urlparse
 
 logger=logging.getLogger('common')
 hachoir_config.quiet = True
@@ -114,6 +116,7 @@ class BaseClient(object):
         self._monitor= BaseClient.Monitor(self)
         if not args or not args.quiet:
             self.add_monitor_listener(self.print_status)
+        self._delete_on_close=True if args and args.delete_on_finish else False
     
     def _on_file_ready(self, filehash):
         self._file.filehash=filehash
@@ -161,6 +164,9 @@ class BaseClient(object):
     def close(self):
         if self._cache:
             self._cache.close()
+        if self._delete_on_close and self._file:
+            self._file.remove()
+            
     
     @property        
     def unique_file_id(self):
@@ -408,8 +414,15 @@ class AbstractFile(object):
     def full_path(self):
         return self._full_path  
     
+    def close(self):
+        pass
+    
     def remove(self):
-        os.unlink(self._full_path)
+        dirs=self.path.split(os.sep)
+        if len(dirs)>1:
+            shutil.rmtree(os.path.join(self._base,dirs[0]))
+        else:
+            os.unlink(self._full_path)
 
     def update_piece(self, n, data):
         for c in self._cursors:
@@ -448,8 +461,11 @@ class Resolver(object):
         self._client=loader
     def resolve(self, url):
         return url
-        return self._rate
-            
     
-    def __str__(self):
-        return self._full_path
+    @staticmethod 
+    def url_to_file(uri):       
+        path=urlparse.urlsplit(uri)[2]
+        if path.startswith('/'):
+            path=path[1:]
+        return path
+    

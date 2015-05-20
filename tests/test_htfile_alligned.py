@@ -134,6 +134,32 @@ class Test(unittest.TestCase):
         self.assertEqual(ref, buf.getvalue())
         c.close()
         
+    def test_seek_end(self):
+        size=TEST_FILE_SIZE
+        
+        client=DummyClient(self.fname)
+        bt = HTFile(self.fname, './', size, 1024, client.request)
+        self.assertEqual(bt.last_piece, 14)
+        client.serve(bt)
+        buf=StringIO()
+        c=bt.create_cursor()
+        c.seek(size-64)
+        while True:
+            sz=8
+            res=c.read(sz)
+            if res:
+                buf.write(res)
+            else:
+                break
+        with open(self.fname, 'rb') as f:
+            f.seek(size-64)
+            ref=f.read(64)
+        self.assertTrue(not bt.is_complete)
+        self.assertEqual(bt.downloaded, 1024)
+        self.assertEqual(len(ref), len(buf.getvalue()))
+        self.assertEqual(ref, buf.getvalue())
+        c.close()
+        
         
     
         

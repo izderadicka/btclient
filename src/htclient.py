@@ -293,9 +293,8 @@ class HTClient(BaseClient):
         
     def start_url(self, uri):
         self._monitor.start()
-        path=urlparse.urlsplit(uri)[2]
-        if path.startswith('/'):
-            path=path[1:]
+        path=self.resolver_class.url_to_file(uri)
+        print 'XXXX', path
         c0=None
         try:
             self._file=HTFile(path, self._base_path, 0, self.piece_size, self.request_piece)
@@ -366,9 +365,9 @@ class HTClient(BaseClient):
             'threads': s.threads
             }
     def close(self):
-        BaseClient.close(self)
         if self._file:
             self._file.close()
+        BaseClient.close(self)
             
     def print_status(self, s, client):
         progress=s.downloaded / float(s.total_size) * 100if s.total_size else 0
@@ -491,9 +490,14 @@ class HTFile(AbstractFile):
                 
         return sum      
     
+    def remove(self):
+        AbstractFile.remove(self)
+        if os.path.exists(self.pieces_index_file):
+            os.unlink(self.pieces_index_file)
     def close(self):
-        self._file.close()
         with open(self.pieces_index_file, 'wb') as f:
             pickle.dump((self.mime,self.pieces),f)
+        self._file.close()
+        
             
     

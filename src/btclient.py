@@ -27,6 +27,7 @@ from htclient import HTClient
 import plugins  # @UnresolvedImport
 import signal
 import json
+import shutil
 
 logger=logging.getLogger()
 
@@ -493,6 +494,8 @@ def main(args=None):
     p.add_argument("--stream", action="store_true", help="just file streaming, but will not start player")
     p.add_argument("--no-resume", action="store_true",help="Do not resume from last known position")
     p.add_argument("-q", "--quiet", action="store_true", help="Quiet - did not print progress to stdout")
+    p.add_argument('--delete-on-finish', action="store_true", help="Delete downloaded file when program finishes")
+    p.add_argument('--clear-older', type=int, default=0, help="Deletes files older then x days from download directory, if set will slowdown start of client")
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)
@@ -501,6 +504,21 @@ def main(args=None):
     else:
         logger.setLevel(logging.CRITICAL)
         logger.addHandler(logging.StreamHandler())
+        
+    if args.clear_older:
+        days=args.clear_older
+        items=os.listdir(args.directory)
+        now=time.time()
+        for item in items:
+            if item!=Cache.CACHE_DIR:
+                full_path=os.path.join(args.directory,item)
+                if now-os.path.getctime(full_path)>days*24*3600:
+                    logger.debug('Deleting path %s',full_path)
+                    if os.path.isdir(full_path):
+                        shutil.rmtree(full_path,ignore_errors=True)
+                    else:
+                        os.unlink(full_path)
+    
     if args.print_pieces:
         print_pieces(args) 
     elif re.match('https?://localhost', args.url):  

@@ -11,10 +11,11 @@ import logging
 logger=logging.getLogger('cache')
 
 class Cache(object):
+    CACHE_DIR='.cache'
     def __init__(self, path):
         if not os.path.isdir(path):
             raise ValueError('Invalid base directory')
-        self.path=os.path.join(path, '.cache')
+        self.path=os.path.join(path, Cache.CACHE_DIR)
         if not os.path.isdir(self.path):
             os.mkdir(self.path)
         self._index_path=os.path.join(self.path, 'index')
