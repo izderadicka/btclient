@@ -192,7 +192,7 @@ class BTClient(BaseClient):
                  port_max=6891,
                  state_file="~/.btclient_state",
                  **kwargs):
-        super(BTClient,self).__init__(path_to_store)
+        super(BTClient,self).__init__(path_to_store, args=args)
         self._torrent_params={'save_path':path_to_store,
                               'storage_mode':lt.storage_mode_t.storage_mode_sparse
                               }
@@ -203,6 +203,11 @@ class BTClient(BaseClient):
                 state=pickle.load(f)
                 self._ses.load_state(state)
         #self._ses.set_alert_mask(lt.alert.category_t.progress_notification)
+        if args and (args.bt_download_limit or args.bt_upload_limit):
+            s=lt.session_settings()
+            s.download_rate_limit=int(round(args.bt_download_limit*1024))
+            s.upload_rate_limit=int(round(args.bt_upload_limit*1024))
+            self._ses.set_settings(s)
         self._ses.listen_on(port_min, port_max)
         self._start_services()
         self._th=None
@@ -357,9 +362,9 @@ class BTClient(BaseClient):
             pickle.dump(state,f)
     
     def close(self):
-        BaseClient.close(self)
         self.save_state()
         self._stop_services()
+        BaseClient.close(self)
         
     @property
     def status(self):
@@ -498,6 +503,8 @@ def main(args=None):
     p.add_argument("-q", "--quiet", action="store_true", help="Quiet - did not print progress to stdout")
     p.add_argument('--delete-on-finish', action="store_true", help="Delete downloaded file when program finishes")
     p.add_argument('--clear-older', type=int, default=0, help="Deletes files older then x days from download directory, if set will slowdown start of client")
+    p.add_argument('--bt-download-limit', type=int, default=0, help='Download limit for torrents kB/s')
+    p.add_argument('--bt-upload-limit', type=int, default=0, help='Upload limit for torrents kB/s')
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)

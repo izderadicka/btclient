@@ -439,7 +439,7 @@ class HTFile(AbstractFile):
         path=os.path.split(self.full_path)[0]
         if not os.path.exists(path):
             os.makedirs(path, mode=0755)
-        #sparecely allocate file 
+        #sparecelly allocate file 
         with open(self.full_path,'ab') as f:
             f.truncate(size)
             
