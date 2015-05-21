@@ -294,7 +294,6 @@ class HTClient(BaseClient):
     def start_url(self, uri):
         self._monitor.start()
         path=self.resolver_class.url_to_file(uri)
-        print 'XXXX', path
         c0=None
         try:
             self._file=HTFile(path, self._base_path, 0, self.piece_size, self.request_piece)

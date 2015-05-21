@@ -423,6 +423,8 @@ class BTClient(BaseClient):
             if pieces[-1]:
                 rem=self._file.size % self._file.piece_size
                 downloaded+=rem if rem else self._file.piece_size
+        else:
+            downloaded=0
         return {'source_type':'bittorrent',
             'state':BTClient.STATE_STR[s.state],
             'downloaded':downloaded,
@@ -581,7 +583,7 @@ def stream(args, client_class, resolver_class=None):
             def print_url(f,done):
                 server.set_file(f)
                 base='http://127.0.0.1:'+ str(args.port)+'/'
-                url=urlparse.urljoin(base, f.path)
+                url=urlparse.urljoin(base, urllib.quote(f.path))
                 print "\nServing file on %s" % url
                 sys.stdout.flush()
 
