@@ -9,8 +9,9 @@ import logging
 from threading import Lock,Event, Thread
 import copy
 from hachoir_metadata import extractMetadata
-from hachoir_parser import createParser
+from hachoir_parser import guessParser
 import hachoir_core.config as hachoir_config
+from hachoir_core.stream.input import InputIOStream
 from opensubtitle import OpenSubtitles
 import threading
 import traceback
@@ -18,6 +19,7 @@ from cache import Cache
 import time
 import shutil
 import urlparse
+from StringIO import StringIO
 
 logger=logging.getLogger('common')
 hachoir_config.quiet = True
@@ -28,7 +30,10 @@ def enum(**enums):
 TerminalColor=enum(default='\033[39m',green='\033[32m', red='\033[31m', yellow='\033[33m')
 
 def get_duration(fn):
-    p=createParser(unicode(fn))
+    # We need to provide just begining of file otherwise hachoir might try to read all file
+    with open(fn,'rb') as f:
+        s=StringIO(f.read(1024*64))
+    p=guessParser(InputIOStream(s, filename=unicode(fn), tags=[]))
     m=extractMetadata(p)
     if m:
         return m.getItem('duration',0) and m.getItem('duration',0).value
@@ -368,7 +373,7 @@ class AbstractFile(object):
         self.first_piece=0
         self.last_piece=self.first_piece + (max(size-1,0)) // piece_size
         
-        self._duration=None
+        
         self._rate=None
         self._piece_duration=None
         
@@ -430,9 +435,9 @@ class AbstractFile(object):
             
     @property    
     def duration(self):
-        if not self._duration:
+        if not hasattr(self,'_duration'):
             self._duration= get_duration(self._full_path) if os.path.exists(self._full_path) else 0
-        return self._duration
+        return self._duration or 0
     
     @property
     def piece_duration_ms(self):

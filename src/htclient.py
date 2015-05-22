@@ -29,7 +29,6 @@ from io import BytesIO
 import gzip
 import json
 import shutil
-from matplotlib.testing.jpl_units.Duration import Duration
 from collections import deque
 
 logger=logging.getLogger('htclient')
