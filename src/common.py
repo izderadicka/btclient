@@ -425,7 +425,7 @@ class AbstractFile(object):
     def remove(self):
         dirs=self.path.split(os.sep)
         if len(dirs)>1:
-            shutil.rmtree(os.path.join(self._base,dirs[0]))
+            shutil.rmtree(os.path.join(self._base,dirs[0]),ignore_errors=True)
         else:
             os.unlink(self._full_path)
 

@@ -493,9 +493,12 @@ class HTFile(AbstractFile):
         if os.path.exists(self.pieces_index_file):
             os.unlink(self.pieces_index_file)
     def close(self):
-        with open(self.pieces_index_file, 'wb') as f:
-            pickle.dump((self.mime,self.pieces),f)
         self._file.close()
+        d=os.path.split(self.pieces_index_file)[0]
+        if d and os.path.isdir(d):
+            with open(self.pieces_index_file, 'wb') as f:
+                pickle.dump((self.mime,self.pieces),f)
+        
         
             
     

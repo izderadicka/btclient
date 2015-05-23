@@ -370,7 +370,7 @@ class BTClient(BaseClient):
     def status(self):
         if self._th:
             s = self._th.status()
-            s.desired_rate=self._file.byte_rate if self._file else 0
+            s.desired_rate=self._file.byte_rate if self._file and s.progress>0 else 0
             return s
     
     class Dispatcher(BaseMonitor):
