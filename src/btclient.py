@@ -203,7 +203,7 @@ class BTClient(BaseClient):
                 state=pickle.load(f)
                 self._ses.load_state(state)
         #self._ses.set_alert_mask(lt.alert.category_t.progress_notification)
-        if args and (args.bt_download_limit or args.bt_upload_limit):
+        if args:
             s=lt.session_settings()
             s.download_rate_limit=int(round(args.bt_download_limit*1024))
             s.upload_rate_limit=int(round(args.bt_upload_limit*1024))
