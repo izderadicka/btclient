@@ -23,6 +23,8 @@ Accepts either torrent file path or magnet link or http(s) link to torrent file 
 From torrent file chooses the biggest video file, starts to download it  and sends it to video player 
 (works with mplayer or vlc).
 
+Can also download subtitles for current video file (option -s - uses opensubtitles.org API).
+
 Requires libtorrent (1.0.4) and its python bindings,  gnome-terminal and hachoir python libraries.
 Optionally  beautifulsoup and adecaptcha for plugins.
 
