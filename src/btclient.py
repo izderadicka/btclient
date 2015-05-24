@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-__version__='0.4.0'
+__version__='0.4.1'
 
 import libtorrent as lt
 import time
@@ -183,8 +183,6 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
         logger.debug(format, *args)
      
 
-            
-
 class BTClient(BaseClient):
     def __init__(self, path_to_store, 
                  args=None,
@@ -299,6 +297,9 @@ class BTClient(BaseClient):
     def remove_dispacher_listener(self,cb):
         self._dispatcher.remove_listener(cb)
         
+    def remove_all_dispatcher_listeners(self):
+        self._dispatcher.remove_all_listeners()
+        
     def start_url(self, uri):
         if self._th:
             raise Exception('Torrent is already started')
@@ -306,7 +307,11 @@ class BTClient(BaseClient):
         def info_from_file(uri):
             if os.access(uri,os.R_OK):
                 info = lt.torrent_info(uri)
-                return {'ti':info} 
+                tp= {'ti':info} 
+                resume_data= self._cache.get_resume(info_hash=str(info.info_hash()))
+                if resume_data:
+                    tp['resume_data']=resume_data
+                return tp
             raise ValueError('Invalid torrent path %s' % uri)
         
         if uri.startswith('http://') or uri.startswith('https://'):
@@ -316,6 +321,9 @@ class BTClient(BaseClient):
                 tp=info_from_file(stored)
             else:
                 tp={'url':uri}
+                resume_data=self._cache.get_resume(url=uri)
+                if resume_data:
+                    tp['resume_data']=resume_data
         elif uri.startswith('magnet:'):
             self._url=uri
             stored=self._cache.get_torrent(info_hash=Cache.hash_from_magnet(uri))
@@ -323,6 +331,9 @@ class BTClient(BaseClient):
                 tp=info_from_file(stored)
             else:
                 tp={'url':uri}
+                resume_data=self._cache.get_resume(info_hash=Cache.hash_from_magnet(uri))
+                if resume_data:
+                    tp['resume_data']=resume_data
         elif os.path.isfile(uri):
             tp=info_from_file(uri)
         else:
@@ -360,9 +371,28 @@ class BTClient(BaseClient):
         state=self._ses.save_state()
         with open(self._state_file, 'wb') as f:
             pickle.dump(state,f)
-    
+            
+    def save_resume(self):
+        if self._th.need_save_resume_data() and self._th.is_valid() and self._th.has_metadata():
+            r=BTClient.ResumeData(self)
+            start=time.time()
+            while (time.time() - start) <= 5 :
+                if r.data or r.failed:
+                    break
+                time.sleep(0.1)
+            if r.data:
+                logger.debug('Savig fast resume data')
+                self._cache.save_resume(self.unique_file_id,lt.bencode(r.data))
+            else:
+                logger.warn('Fast resume data not available')    
+        
     def close(self):
-        self.save_state()
+        self.remove_all_dispatcher_listeners()
+        if self._ses:
+            self._ses.pause()
+            if self._th:
+                self.save_resume()
+            self.save_state()
         self._stop_services()
         BaseClient.close(self)
         
@@ -372,6 +402,20 @@ class BTClient(BaseClient):
             s = self._th.status()
             s.desired_rate=self._file.byte_rate if self._file and s.progress>0.003 else 0
             return s
+    
+    class ResumeData(object):  
+        def __init__(self, client):   
+            self.data=None
+            self.failed=False
+            client.add_dispatcher_listener(self._process_alert)
+            client._th.save_resume_data()
+            
+        def _process_alert(self, t, alert):
+            if t=='save_resume_data_failed_alert':
+                logger.debug('Fast resume data generation failed')
+                self.failed=True
+            elif t=='save_resume_data_alert':
+                self.data=alert.resume_data
     
     class Dispatcher(BaseMonitor):
         def __init__(self, client):

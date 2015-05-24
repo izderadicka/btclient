@@ -93,6 +93,10 @@ class BaseMonitor(Thread):
                 self._listeners.remove(cb)
             except ValueError:
                 pass
+            
+    def remove_all_listeners(self):
+        with self._lock:
+            self._listeners=[]
 
 
 class BaseClient(object):

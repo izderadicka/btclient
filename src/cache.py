@@ -34,7 +34,23 @@ class Cache(object):
         
     def _tname(self, info_hash):
         return os.path.join(self.path, info_hash.upper()+'.torrent')
+    
+    def _rname(self, info_hash):
+        return os.path.join(self.path, info_hash.upper()+'.resume')
+    
+    def save_resume(self,info_hash,data):
+        with open(self._rname(info_hash),'wb') as f:
+            f.write(data)
             
+    def get_resume(self, url=None, info_hash=None):
+        if url:
+            info_hash=self._index.get(url)
+        if not info_hash:
+            return
+        rname=self._rname(info_hash)    
+        if os.access(rname,os.R_OK):
+            with open(rname, 'rb') as f:
+                return f.read()
         
     def file_complete(self, torrent, url=None):
         info_hash=str(torrent.info_hash())
@@ -45,7 +61,7 @@ class Cache(object):
         if url:
             self.save(url,info_hash)
            
-    
+
     def get_torrent(self, url=None, info_hash=None):
         if url:
             info_hash=self._index.get(url)
