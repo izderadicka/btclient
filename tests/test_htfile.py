@@ -108,6 +108,8 @@ class Test(unittest.TestCase):
         self.assertEqual(ref, buf.getvalue())
         c.close()
         bt.close()
+        bt.remove()
+        self.assertTrue(not os.path.exists(bt.full_path))
         
     
         

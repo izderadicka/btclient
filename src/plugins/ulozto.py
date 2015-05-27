@@ -56,4 +56,17 @@ class UlozTo(Resolver):
         file_url=res.geturl()
         res.close()
         return file_url
+    
+    @staticmethod
+    def url_to_file(uri):
+        path=urlparse.urlsplit(uri)[2]
+        if path.startswith('/'):
+            path=path[1:]
+        path_parts=path.split(os.sep)
+        name_parts=path_parts[-1].split('-')
+        dname='-'.join(name_parts[:-1])
+        fname=dname+'.'+name_parts[-1]
+        if len(path_parts)>1:
+            dname+='(%s)'%path_parts[-2]
+        return os.path.join(dname, fname)
         

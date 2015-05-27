@@ -30,7 +30,6 @@ from io import BytesIO
 import gzip
 import json
 import shutil
-from matplotlib.testing.jpl_units.Duration import Duration
 from collections import deque
 
 
@@ -349,9 +348,7 @@ class HTClient(BaseClient):
         
     def start_url(self, uri):
         self._monitor.start()
-        path=urlparse.urlsplit(uri)[2]
-        if path.startswith('/'):
-            path=path[1:]
+        path=self.resolver_class.url_to_file(uri)
         c0=None
         try:
             self._file=HTFile(path, self._base_path, 0, self.piece_size, self.request_piece)
@@ -422,9 +419,9 @@ class HTClient(BaseClient):
             'threads': s.threads
             }
     def close(self):
-        BaseClient.close(self)
         if self._file:
             self._file.close()
+        BaseClient.close(self)
             
     def print_status(self, s, client):
         progress=s.downloaded / float(s.total_size) * 100if s.total_size else 0
@@ -497,7 +494,7 @@ class HTFile(AbstractFile):
         path=os.path.split(self.full_path)[0]
         if not os.path.exists(path):
             os.makedirs(path, mode=0755)
-        #sparecely allocate file 
+        #sparecelly allocate file 
         with open(self.full_path,'ab') as f:
             f.truncate(size)
             
@@ -547,9 +544,17 @@ class HTFile(AbstractFile):
                 
         return sum      
     
+    def remove(self):
+        AbstractFile.remove(self)
+        if os.path.exists(self.pieces_index_file):
+            os.unlink(self.pieces_index_file)
     def close(self):
         self._file.close()
-        with open(self.pieces_index_file, 'wb') as f:
-            pickle.dump((self.mime,self.pieces),f)
+        d=os.path.split(self.pieces_index_file)[0]
+        if d and os.path.isdir(d):
+            with open(self.pieces_index_file, 'wb') as f:
+                pickle.dump((self.mime,self.pieces),f)
+        
+        
             
     

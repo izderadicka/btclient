@@ -9,13 +9,17 @@ import logging
 from threading import Lock,Event, Thread
 import copy
 from hachoir_metadata import extractMetadata
-from hachoir_parser import createParser
+from hachoir_parser import guessParser
 import hachoir_core.config as hachoir_config
+from hachoir_core.stream.input import InputIOStream
 from opensubtitle import OpenSubtitles
 import threading
 import traceback
 from cache import Cache
 import time
+import shutil
+import urlparse
+from StringIO import StringIO
 
 logger=logging.getLogger('common')
 hachoir_config.quiet = True
@@ -26,7 +30,10 @@ def enum(**enums):
 TerminalColor=enum(default='\033[39m',green='\033[32m', red='\033[31m', yellow='\033[33m')
 
 def get_duration(fn):
-    p=createParser(unicode(fn))
+    # We need to provide just begining of file otherwise hachoir might try to read all file
+    with open(fn,'rb') as f:
+        s=StringIO(f.read(1024*64))
+    p=guessParser(InputIOStream(s, filename=unicode(fn), tags=[]))
     m=extractMetadata(p)
     if m:
         return m.getItem('duration',0) and m.getItem('duration',0).value
@@ -86,6 +93,10 @@ class BaseMonitor(Thread):
                 self._listeners.remove(cb)
             except ValueError:
                 pass
+            
+    def remove_all_listeners(self):
+        with self._lock:
+            self._listeners=[]
 
 
 class BaseClient(object):
@@ -114,6 +125,7 @@ class BaseClient(object):
         self._monitor= BaseClient.Monitor(self)
         if not args or not args.quiet:
             self.add_monitor_listener(self.print_status)
+        self._delete_on_close=True if args and args.delete_on_finish else False
     
     def _on_file_ready(self, filehash):
         self._file.filehash=filehash
@@ -161,6 +173,9 @@ class BaseClient(object):
     def close(self):
         if self._cache:
             self._cache.close()
+        if self._delete_on_close and self._file:
+            self._file.remove()
+            
     
     @property        
     def unique_file_id(self):
@@ -362,7 +377,7 @@ class AbstractFile(object):
         self.first_piece=0
         self.last_piece=self.first_piece + (max(size-1,0)) // piece_size
         
-        self._duration=None
+        
         self._rate=None
         self._piece_duration=None
         
@@ -408,8 +423,15 @@ class AbstractFile(object):
     def full_path(self):
         return self._full_path  
     
+    def close(self):
+        pass
+    
     def remove(self):
-        os.unlink(self._full_path)
+        dirs=self.path.split(os.sep)
+        if len(dirs)>1:
+            shutil.rmtree(os.path.join(self._base,dirs[0]),ignore_errors=True)
+        else:
+            os.unlink(self._full_path)
 
     def update_piece(self, n, data):
         for c in self._cursors:
@@ -417,9 +439,9 @@ class AbstractFile(object):
             
     @property    
     def duration(self):
-        if not self._duration:
+        if not hasattr(self,'_duration'):
             self._duration= get_duration(self._full_path) if os.path.exists(self._full_path) else 0
-        return self._duration
+        return self._duration or 0
     
     @property
     def piece_duration_ms(self):
@@ -448,8 +470,11 @@ class Resolver(object):
         self._client=loader
     def resolve(self, url):
         return url
-        return self._rate
-            
     
-    def __str__(self):
-        return self._full_path
+    @staticmethod 
+    def url_to_file(uri):       
+        path=urlparse.urlsplit(uri)[2]
+        if path.startswith('/'):
+            path=path[1:]
+        return path
+    
