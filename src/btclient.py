@@ -400,7 +400,15 @@ class BTClient(BaseClient):
     def status(self):
         if self._th:
             s = self._th.status()
-            s.desired_rate=self._file.byte_rate if self._file and s.progress>0.003 else 0
+            if self._file:
+                pieces=s.pieces[self._file.first_piece:self._file.last_piece]
+                progress= float(sum(pieces))/len(pieces)
+            else:
+                progress=0
+            size=self._file.size if self._file else 0
+            s.desired_rate=self._file.byte_rate if self._file and progress>0.003 else 0
+            s.progress_file=progress
+            s.file_size=size
             return s
     
     class ResumeData(object):  
@@ -456,7 +464,7 @@ class BTClient(BaseClient):
             
         status = BTClient.STATE_STR[s.state]
         print '\r%.2f%% (of %.1fMB) (down: %s%.1f kB/s\033[39m(need %.1f) up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
-            (s.progress * 100, s.total_wanted/1048576.0, 
+            (s.progress_file * 100, s.file_size/1048576.0, 
              color, s.download_rate / 1000, s.desired_rate/1000.0 if s.desired_rate else 0.0,
              s.upload_rate / 1000, \
             s.num_seeds, s.num_complete, s.num_peers, s.num_incomplete, status),
@@ -465,7 +473,6 @@ class BTClient(BaseClient):
         
     def get_normalized_status(self):
         s=self.status
-        size=self._file.size if self._file else 0
         if self._file:
             pieces = s.pieces[self._file.first_piece: self._file.last_piece+1]
             downloaded = reduce(lambda s,x:s+(x and 1 or 0)*self._file.piece_size, pieces[:-1], 0)
@@ -477,11 +484,11 @@ class BTClient(BaseClient):
         return {'source_type':'bittorrent',
             'state':BTClient.STATE_STR[s.state],
             'downloaded':downloaded,
-            'total_size':size,
+            'total_size':s.file_size,
             'download_rate':s.download_rate,
             'desired_rate':s.desired_rate, 
             'piece_size': self._file.piece_size if self._file else 0,
-            'progress': s.progress,
+            'progress': s.progress_file,
             #BT specific
             'seeds_connected': s.num_seeds,
             'seeds_total': s.num_complete,
