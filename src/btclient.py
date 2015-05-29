@@ -244,7 +244,6 @@ class BTClient(BaseClient):
             self.hash=Hasher(self._file, self._on_file_ready)
             
     def _choose_file(self, files, search=None):   
-        print [f.path for f in files] 
         videos=filter(lambda f: VIDEO_EXTS.has_key(os.path.splitext(f.path)[1]), files)
         if search:
             videos=filter(lambda f: re.match(search, f.path), videos)
