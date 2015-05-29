@@ -41,7 +41,7 @@ INITIAL_TRACKERS=['udp://tracker.openbittorrent.com:80',
 
 VIDEO_EXTS={'.avi':'video/x-msvideo','.mp4':'video/mp4','.mkv':'video/x-matroska',
             '.m4v':'video/mp4','.mov':'video/quicktime', '.mpg':'video/mpeg','.ogv':'video/ogg', 
-            '.ogg':'video/ogg', '.webm':'video/webm', '.ts': 'video/mp2t'}
+            '.ogg':'video/ogg', '.webm':'video/webm', '.ts': 'video/mp2t', '.3gp':'video/3gpp'}
 
 RANGE_RE=re.compile(r'bytes=(\d+)-')
 
@@ -243,7 +243,8 @@ class BTClient(BaseClient):
             logger.debug('Got torrent metadata and start download')
             self.hash=Hasher(self._file, self._on_file_ready)
             
-    def _choose_file(self, files, search=None):    
+    def _choose_file(self, files, search=None):   
+        print [f.path for f in files] 
         videos=filter(lambda f: VIDEO_EXTS.has_key(os.path.splitext(f.path)[1]), files)
         if search:
             videos=filter(lambda f: re.match(search, f.path), videos)
