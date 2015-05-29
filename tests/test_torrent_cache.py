@@ -9,6 +9,7 @@ import os
 import shutil
 from cache import Cache
 import libtorrent as lt
+import re
 
 class Test(unittest.TestCase):
 
@@ -30,6 +31,11 @@ class Test(unittest.TestCase):
         ih=Cache.hash_from_magnet(m)
         self.assertEqual(len(ih), 40)
         self.assertEqual(ih, "440008e244e8398522d2271318afc2f938274d56".upper() )
+        m='magnet:?xt=urn:btih:VQV6ME7OQAENNYPFHITASWARN6PXEO6I&dn=Game.of.Thrones.S01E05.720p.HDTV.x264-CTU&tr=udp://tracker.openbittorrent.com:80&tr=udp://open.demonii.com:80&tr=udp://tracker.coppersurfer.tk:80&tr=udp://tracker.leechers-paradise.org:6969&tr=udp://exodus.desync.com:6969'
+        ih=Cache.hash_from_magnet(m)
+        self.assertEqual(len(ih), 40)
+        self.assertTrue(re.match('^[0-9A-F]+$',ih))
+        
         
     def test_create(self):
         c=Cache(self.dir)

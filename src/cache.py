@@ -8,6 +8,7 @@ import shelve
 import libtorrent as lt
 import re
 import logging
+import base64
 logger=logging.getLogger('cache')
 
 class Cache(object):
@@ -72,12 +73,21 @@ class Cache(object):
             logger.debug('Torrent is cached')
             return tname
      
-    magnet_re=re.compile('xt=urn:btih:([0-9A-Fa-f]+)')   
+    magnet_re=re.compile('xt=urn:btih:([0-9A-Za-z]+)')   
+    hexa_chars=re.compile('^[0-9A-F]+$')
     @staticmethod
     def hash_from_magnet(m):
         res=Cache.magnet_re.search(m)
         if res:
-            return res.group(1).upper()
+            ih=res.group(1).upper()
+            if len(ih)==40 and Cache.hexa_chars.match(ih):
+                return res.group(1).upper()
+            elif len(ih)==32:
+                s=base64.b32decode(ih)
+                return "".join("{:02X}".format(ord(c)) for c in s)
+            else:
+                raise ValueError('Not BT magnet link')
+            
         else:
             raise ValueError('Not BT magnet link')
         

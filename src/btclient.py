@@ -31,6 +31,14 @@ import shutil
 
 logger=logging.getLogger()
 
+INITIAL_TRACKERS=['udp://tracker.openbittorrent.com:80',
+                  'udp://tracker.istole.it:80',
+                  'udp://open.demonii.com:80',
+                  'udp://tracker.coppersurfer.tk:80',
+                  'udp://tracker.leechers-paradise.org:6969',
+                  'udp://exodus.desync.com:6969',
+                  'udp://tracker.publicbt.com:80']
+
 VIDEO_EXTS={'.avi':'video/x-msvideo','.mp4':'video/mp4','.mkv':'video/x-matroska',
             '.m4v':'video/mp4','.mov':'video/quicktime', '.mpg':'video/mpeg','.ogv':'video/ogg', 
             '.ogg':'video/ogg', '.webm':'video/webm', '.ts': 'video/mp2t'}
@@ -341,6 +349,8 @@ class BTClient(BaseClient):
         
         tp.update(self._torrent_params)
         self._th = self._ses.add_torrent(tp)
+        for tr in INITIAL_TRACKERS:
+            self._th.add_tracker({'url':tr})
         self._th.set_sequential_download(True)
 #         if tp.has_key('ti'):
 #             self._meta_ready(self._th.get_torrent_info())
