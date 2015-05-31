@@ -31,9 +31,17 @@ import shutil
 
 logger=logging.getLogger()
 
+INITIAL_TRACKERS=['udp://tracker.openbittorrent.com:80',
+                  'udp://tracker.istole.it:80',
+                  'udp://open.demonii.com:80',
+                  'udp://tracker.coppersurfer.tk:80',
+                  'udp://tracker.leechers-paradise.org:6969',
+                  'udp://exodus.desync.com:6969',
+                  'udp://tracker.publicbt.com:80']
+
 VIDEO_EXTS={'.avi':'video/x-msvideo','.mp4':'video/mp4','.mkv':'video/x-matroska',
             '.m4v':'video/mp4','.mov':'video/quicktime', '.mpg':'video/mpeg','.ogv':'video/ogg', 
-            '.ogg':'video/ogg', '.webm':'video/webm', '.ts': 'video/mp2t'}
+            '.ogg':'video/ogg', '.webm':'video/webm', '.ts': 'video/mp2t', '.3gp':'video/3gpp'}
 
 RANGE_RE=re.compile(r'bytes=(\d+)-')
 
@@ -235,7 +243,7 @@ class BTClient(BaseClient):
             logger.debug('Got torrent metadata and start download')
             self.hash=Hasher(self._file, self._on_file_ready)
             
-    def _choose_file(self, files, search=None):    
+    def _choose_file(self, files, search=None):   
         videos=filter(lambda f: VIDEO_EXTS.has_key(os.path.splitext(f.path)[1]), files)
         if search:
             videos=filter(lambda f: re.match(search, f.path), videos)
@@ -341,6 +349,8 @@ class BTClient(BaseClient):
         
         tp.update(self._torrent_params)
         self._th = self._ses.add_torrent(tp)
+        for tr in INITIAL_TRACKERS:
+            self._th.add_tracker({'url':tr})
         self._th.set_sequential_download(True)
 #         if tp.has_key('ti'):
 #             self._meta_ready(self._th.get_torrent_info())
@@ -400,7 +410,15 @@ class BTClient(BaseClient):
     def status(self):
         if self._th:
             s = self._th.status()
-            s.desired_rate=self._file.byte_rate if self._file and s.progress>0.003 else 0
+            if self._file:
+                pieces=s.pieces[self._file.first_piece:self._file.last_piece]
+                progress= float(sum(pieces))/len(pieces)
+            else:
+                progress=0
+            size=self._file.size if self._file else 0
+            s.desired_rate=self._file.byte_rate if self._file and progress>0.003 else 0
+            s.progress_file=progress
+            s.file_size=size
             return s
     
     class ResumeData(object):  
@@ -456,7 +474,7 @@ class BTClient(BaseClient):
             
         status = BTClient.STATE_STR[s.state]
         print '\r%.2f%% (of %.1fMB) (down: %s%.1f kB/s\033[39m(need %.1f) up: %.1f kB/s s/p: %d(%d)/%d(%d)) %s' % \
-            (s.progress * 100, s.total_wanted/1048576.0, 
+            (s.progress_file * 100, s.file_size/1048576.0, 
              color, s.download_rate / 1000, s.desired_rate/1000.0 if s.desired_rate else 0.0,
              s.upload_rate / 1000, \
             s.num_seeds, s.num_complete, s.num_peers, s.num_incomplete, status),
@@ -465,7 +483,6 @@ class BTClient(BaseClient):
         
     def get_normalized_status(self):
         s=self.status
-        size=self._file.size if self._file else 0
         if self._file:
             pieces = s.pieces[self._file.first_piece: self._file.last_piece+1]
             downloaded = reduce(lambda s,x:s+(x and 1 or 0)*self._file.piece_size, pieces[:-1], 0)
@@ -477,11 +494,11 @@ class BTClient(BaseClient):
         return {'source_type':'bittorrent',
             'state':BTClient.STATE_STR[s.state],
             'downloaded':downloaded,
-            'total_size':size,
+            'total_size':s.file_size,
             'download_rate':s.download_rate,
             'desired_rate':s.desired_rate, 
             'piece_size': self._file.piece_size if self._file else 0,
-            'progress': s.progress,
+            'progress': s.progress_file,
             #BT specific
             'seeds_connected': s.num_seeds,
             'seeds_total': s.num_complete,

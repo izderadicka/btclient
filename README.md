@@ -34,9 +34,10 @@ Install
 
 Now manual:
 ```
-#install libtorrent manually - latest 1.0.4 from 
+#install libtorrent manually - needs libboost development libs 
 sudo apt-get install libboost-system-dev libboost-chrono-dev libboost-python-dev libboost-random-dev
-svn checkout svn://svn.code.sf.net/p/libtorrent/code/trunk libtorrent-code
+# Do not use trunk, but latest 1.0 version, trunk was not working
+svn checkout svn://svn.code.sf.net/p/libtorrent/code/branches/RC_1_0 libtorrent-code
 ./autotool.sh
 ./configure --enable-python-binding
 make
