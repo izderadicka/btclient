@@ -623,16 +623,28 @@ def stream(args, client_class, resolver_class=None):
             player=Player.create(args.player,c.update_play_time)
         
         server=None
+        #test if port if free, otherwise find free
+        free_port=args.port
+        while True:
+            
+                try:
+                    s=socket.socket()
+                    res=s.connect_ex(('127.0.0.1', free_port))
+                    if res:
+                        break
+                finally:
+                    s.close()
+                free_port+=1
         if not args.stdin:
-            server=StreamServer(('127.0.0.1',args.port), BTFileHandler, allow_range=True, status_fn=c.get_normalized_status)
-            logger.debug('Started http server on port %d', args.port)
+            server=StreamServer(('127.0.0.1',free_port), BTFileHandler, allow_range=True, status_fn=c.get_normalized_status)
+            logger.debug('Started http server on port %d', free_port)
             server.run()
         if player:
             def start_play(f, finished):
                 base=None
                 if not args.stdin:
                     server.set_file(f)
-                    base='http://127.0.0.1:'+ str(args.port)+'/'
+                    base='http://127.0.0.1:'+ str(free_port)+'/'
                 sin=args.stdin
                 if finished:
                     base=args.directory
@@ -650,7 +662,7 @@ def stream(args, client_class, resolver_class=None):
         else:
             def print_url(f,done):
                 server.set_file(f)
-                base='http://127.0.0.1:'+ str(args.port)+'/'
+                base='http://127.0.0.1:'+ str(free_port)+'/'
                 url=urlparse.urljoin(base, urllib.quote(f.path))
                 print "\nServing file on %s" % url
                 sys.stdout.flush()
