@@ -3,6 +3,7 @@ Created on Apr 2, 2015
 
 @author: ivan
 '''
+from _version import __version__
 import xmlrpclib
 import urllib2
 import sys
@@ -32,7 +33,7 @@ class Urllib2Transport(xmlrpclib.Transport):
 
 
 class OpenSubtitles(object):
-    USER_AGENT='OSTestUserAgent'
+    USER_AGENT='BTClient v%s'%__version__
     def __init__(self, lang, user='', pwd=''):
         self._lang=lang
         self._proxy=xmlrpclib.ServerProxy('http://api.opensubtitles.org/xml-rpc',
@@ -50,16 +51,15 @@ class OpenSubtitles(object):
         if token:
             self._token=token
         else:
-            raise xmlrpclib.Fault('No token!')
-        
+            raise xmlrpclib.Fault('NO_TOKEN','No token!') 
     def _parse_status(self, res):
         if res.has_key('status'):
             code = res['status'].split()[0]
             if code !='200':
-                raise xmlrpclib.Fault('Returned error status: %d (%s)'%(code,res))
+                raise xmlrpclib.Fault('ERROR_CODE_RETURENED','Returned error status: %s (%s)'%(code,res))
             return True
         else:
-            raise xmlrpclib.Fault('No status!')
+            raise xmlrpclib.Fault('NO_STATUS','No status!')
         
     def search(self, filename, filesize=None,  filehash=None, limit=20):
         filename=os.path.split(filename)[1]
@@ -164,7 +164,7 @@ class OpenSubtitles(object):
             logger.debug('Got results by filehash')
         else:
             match=filter(same_name,data)
-        if match:
+        if match and can_choose!='always':
             sub=match[0]
             link=sub['SubDownloadLink']
             ext=sub['SubFormat']

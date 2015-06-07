@@ -1,6 +1,5 @@
 #!/usr/bin/env python
-__version__='0.4.1'
-
+from _version import __version__
 import libtorrent as lt
 import time
 import sys
@@ -194,8 +193,6 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
 class BTClient(BaseClient):
     def __init__(self, path_to_store, 
                  args=None,
-                 port_min= 6881, 
-                 port_max=6891,
                  state_file="~/.btclient_state",
                  **kwargs):
         super(BTClient,self).__init__(path_to_store, args=args)
@@ -214,7 +211,9 @@ class BTClient(BaseClient):
             s.download_rate_limit=int(round(args.bt_download_limit*1024))
             s.upload_rate_limit=int(round(args.bt_upload_limit*1024))
             self._ses.set_settings(s)
-        self._ses.listen_on(port_min, port_max)
+            self._ses.listen_on(args.listen_port_min, args.listen_port_max)
+        else:
+            self._ses.listen_on(6881, 6891)
         self._start_services()
         self._th=None
         
@@ -566,6 +565,9 @@ def main(args=None):
     p.add_argument('--clear-older', type=int, default=0, help="Deletes files older then x days from download directory, if set will slowdown start of client")
     p.add_argument('--bt-download-limit', type=int, default=0, help='Download limit for torrents kB/s')
     p.add_argument('--bt-upload-limit', type=int, default=0, help='Upload limit for torrents kB/s')
+    p.add_argument('--listen-port-min', type=int, default=6881, help='Bitorrent input port range - minimum port')
+    p.add_argument('--listen-port-max', type=int, default=6891, help='Bitorrent input port range - maximum port')
+    p.add_argument('--choose-subtitles',  action="store_true", help="Always manually choose subtitles (otherwise will try to use best match in many cases)" )
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)
@@ -656,7 +658,8 @@ def stream(args, client_class, resolver_class=None):
                     start_time=0
                 else:
                     start_time=c.last_play_time or 0    
-                player.start(f,base, stdin=sin,sub_lang=args.subtitles,start_time=start_time)
+                player.start(f,base, stdin=sin,sub_lang=args.subtitles,start_time=start_time,
+                             always_choose_subtitles=args.choose_subtitles)
                 logger.debug('Started media player for %s', f)
             c.set_on_file_ready(start_play)
         else:

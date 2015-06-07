@@ -77,13 +77,13 @@ class Player(object):
     def start_log(self):
         self._log = Player.Log(self._proc)
             
-    def start(self, f, base, stdin, sub_lang=None, start_time=None):
+    def start(self, f, base, stdin, sub_lang=None, start_time=None, always_choose_subtitles=False):
         env=self.modify_env()
         params=[self._player,]
         params.extend(self._player_options)
         if sub_lang:
             try:
-                params.extend(self.load_subs(f.full_path, sub_lang, f.size, f.filehash))
+                params.extend(self.load_subs(f.full_path, sub_lang, f.size, f.filehash, always_choose_subtitles))
             except Exception,e:
                 logger.exception('Cannot load subtitles, error: %s',e)
         if start_time:
@@ -110,9 +110,10 @@ class Player(object):
     def start_time_option(self, time):
         raise NotImplementedError()
     
-    def load_subs(self, filename, lang, filesize, filehash):
+    def load_subs(self, filename, lang, filesize, filehash, always_choose_subtitles=False):
         logger.debug('Downloading %s subs for %s', lang, filename)
-        res=  OpenSubtitles.download_if_not_exists(filename,lang, filesize, filehash)
+        res=  OpenSubtitles.download_if_not_exists(filename,lang, filesize, filehash,
+                            can_choose='always' if always_choose_subtitles else True)
         if res:
             logger.debug('Loadeded subs')
             return self.subs_option(res)
