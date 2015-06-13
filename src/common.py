@@ -373,10 +373,8 @@ class AbstractFile(object):
         self._cursors=[]
         self._cursors_history=deque(maxlen=3)
         self._lock=Lock()
-        
         self.first_piece=0
         self.last_piece=self.first_piece + (max(size-1,0)) // piece_size
-        
         
         self._rate=None
         self._piece_duration=None
@@ -414,7 +412,7 @@ class AbstractFile(object):
     
     def map_piece(self, ofs):
         return  self.first_piece+ (ofs+self.offset) // self.piece_size , \
-                self.first_piece+ (ofs+self.offset) % self.piece_size
+                (ofs+self.offset) % self.piece_size
     
     def prioritize_piece(self, piece, idx):
         raise NotImplementedError()

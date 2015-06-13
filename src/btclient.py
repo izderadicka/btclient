@@ -529,7 +529,7 @@ class BTFile(AbstractFile):
         AbstractFile.__init__(self, path, base, size, piece_size)
         self.index=index
         self.first_piece=fmap.piece
-        self.last_piece=self.first_piece + (size+fmap.start) // piece_size
+        self.last_piece=self.first_piece + max((size-1+fmap.start),0) // piece_size
         self.offset=fmap.start
         self._prioritize_fn=prioritize_fn
        

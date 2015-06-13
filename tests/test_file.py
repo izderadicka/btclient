@@ -172,6 +172,31 @@ class Test(unittest.TestCase):
         self.assertEqual(ref, buf.getvalue())
         c.close()
         
+    def test_starts_later(self):
+        size=TEST_FILE_SIZE 
+        fmap=Peer_Request(3, 15)
+        client=DummyClient(self.fname)
+        bt = BTFile(self.fname, './',1, size, fmap, 512, client.request)
+        client.serve(bt)
+        buf=StringIO()
+        c=bt.create_cursor()
+        while True:
+            sz=1024
+            res=c.read(sz)
+            if res:
+                buf.write(res)
+            else:
+                break
+        ofs=3*512+15
+        with open(self.fname, 'rb') as f:
+            f.seek(ofs)
+            ref=f.read(size)
+        self.assertEqual(len(buf.getvalue()), TEST_FILE_SIZE-ofs)
+        self.assertEqual(len(ref), len(buf.getvalue()))
+        self.assertEqual(ref, buf.getvalue())
+        c.close()
+        
+        
         
     def test_seek2(self):
         size=TEST_FILE_SIZE 

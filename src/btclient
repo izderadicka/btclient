@@ -10,4 +10,4 @@ if [ "$2" = "vlc" ] ; then
 PLAYER=vlc
 fi
 
-gnome-terminal --disable-factory --geometry=120x3 --hide-menubar -t "BT Streamer" -x python $INST_DIR/btclient.py -d ~/Downloads/torrents  -p $PLAYER -s eng --bt-download-limit 800 --bt-upload-limit 300  --choose-subtitles "$1" 
+gnome-terminal --disable-factory --geometry=120x3 --hide-menubar -t "BT Streamer" -x python $INST_DIR/btclient.py -d ~/Downloads/torrents  -p $PLAYER -s eng --bt-download-limit 1000 --bt-upload-limit 400  --choose-subtitles "$1" 
