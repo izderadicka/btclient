@@ -1,8 +1,10 @@
 language: python
 sudo: required
+virtualenv:
+    system_site_packages: true
 python:
   - "2.7"
 # command to install dependencies
-install: "./install.sh"
+install: "./install.sh b"
 # command to run tests
 script: python tests/all.py
