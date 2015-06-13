@@ -3,8 +3,9 @@
 
 import unittest
 import sys
+import os.path
 
-sys.path.append('../src')
+sys.path.append(os.path.join(os.path.dirname(__file__),'../src'))
 
 loader=unittest.defaultTestLoader
 

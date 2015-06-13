@@ -74,7 +74,7 @@ class Test(unittest.TestCase):
         
         
     def test_read_ofs(self, delay=0.001, piece_size=1024, read_block=2000):
-        ofs_start=1 * piece_size + 700+1
+        ofs_start=1 * piece_size + 700
         size=TEST_FILE_SIZE - ofs_start
         fmap=Peer_Request(1, 700)
         

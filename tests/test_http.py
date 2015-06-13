@@ -8,21 +8,22 @@ from threading import Thread
 import time
 from htclient import HTTPLoader,HTFile
 from btclient import StreamServer, BTFileHandler
-from _imaging import path
 import os
 from StringIO import StringIO
 import tempfile
 
 PORT = 8001
 URL="http://localhost:%d/breakdance.avi" % PORT
+fname = os.path.join(os.path.dirname(__file__),'breakdance.avi')
 
 class DummyFile(object):
     def __init__(self, path):
-        self.path=path
+        self.path=os.path.basename(path)
+        self._full_path=path
         self.size=os.stat(path).st_size
         
     def create_cursor(self,offset=None):
-        f= open(self.path,'rb')
+        f= open(self._full_path,'rb')
         if offset:
             f.seek(offset)
         return f
@@ -31,7 +32,7 @@ class Test(unittest.TestCase):
 
 
     def setUp(self):
-        f=DummyFile('breakdance.avi')
+        f=DummyFile(fname)
         self.server=StreamServer(('127.0.0.1',PORT), BTFileHandler, tfile=f,allow_range=True)
         self.server.run()
 
@@ -43,7 +44,7 @@ class Test(unittest.TestCase):
 
 
     def test(self):
-        f=DummyFile('breakdance.avi')
+        f=DummyFile(fname)
         piece_size=1024
         c=HTTPLoader(URL, 0)
         first=c.load_piece(0, piece_size)

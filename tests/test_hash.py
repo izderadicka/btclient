@@ -7,7 +7,7 @@ import unittest
 import os
 from opensubtitle import OpenSubtitles
 
-fname = 'breakdance.avi'
+fname = os.path.join(os.path.dirname(__file__),'breakdance.avi')
 
 class Test(unittest.TestCase):
 

@@ -5,11 +5,13 @@ Created on May 1, 2015
 '''
 import unittest
 import tempfile
-import os
+import os.path
 import shutil
 from cache import Cache
 import libtorrent as lt
 import re
+
+TEST_TORRENT=os.path.join(os.path.dirname(__file__), 'test.torrent')
 
 class Test(unittest.TestCase):
 
@@ -42,7 +44,7 @@ class Test(unittest.TestCase):
         c.close()
         
     def test_torrent(self):
-        ti=lt.torrent_info('test.torrent')
+        ti=lt.torrent_info(TEST_TORRENT)
         ih=str(ti.info_hash())
         c=Cache(self.dir)
         url='http:/nekde/neco'
