@@ -13,4 +13,7 @@ suite = loader.discover('.')
 
 runner=unittest.TextTestRunner()
 
-runner.run(suite)
+res=runner.run(suite)
+if res.errors or res.failures:
+    print >>sys.stderr, 'SOME TESTS FAILED!'
+    sys.exit(1)
