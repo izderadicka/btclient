@@ -1,6 +1,6 @@
 BTClient
 --------
-![Build status](https://api.travis-ci.org/izderadicka/btclient.svg)
+[![Build Status](https://travis-ci.org/izderadicka/btclient.svg?branch=master)](https://travis-ci.org/izderadicka/btclient)
 
 Simple Bit Torrent client (command line),  that enables sequential download and then streams video to 
 video player (via http or stdin, but stdin is not seekable), when got enough of the file content is available
