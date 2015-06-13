@@ -6,6 +6,7 @@ Created on May 6, 2015
 import unittest
 from plugins import load_plugins,find_matching_plugin
 from htclient import HTTPLoader
+import sys
 
 class Test(unittest.TestCase):
 
@@ -16,8 +17,12 @@ class Test(unittest.TestCase):
     def test_ulozto(self):
         url='http://www.ulozto.cz/xEtqWa87/jachyme-hod-ho-do-stroje-1974-mp4'
         cls=find_matching_plugin(url)
-        self.assertTrue(cls)
-        loader=HTTPLoader(url, 0, cls)
+        try:
+            import adecaptcha
+            self.assertTrue(cls)
+            loader=HTTPLoader(url, 0, cls)
+        except ImportError:
+            print >>sys.stderr, 'WARNIG - adecaptcha not install ulozto plugin will not be available'
         
         
 

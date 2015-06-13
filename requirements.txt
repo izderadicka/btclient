@@ -1,4 +1,4 @@
 hachoir-metadata 
 hachoir-core 
 hachoir-parser
-libtorrent
+beautifulsoup4
