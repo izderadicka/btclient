@@ -32,9 +32,13 @@ Optionally  beautifulsoup and adecaptcha for plugins.
 Install
 -------
 
-Now manual:
+Now manual (Ubuntu 14.04):
 ```
+git clone --depth 1 https://github.com/izderadicka/btclient.git
+cd btclient/
 ./install.sh
+#optionally you can run tests
+#python tests/all.py
 cp -r src  somewhere
 #can modify btclient script to your preferences
 sudo ln -s /somewhere/btclient /usr/local/bin
