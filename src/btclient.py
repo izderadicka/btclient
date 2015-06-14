@@ -142,7 +142,7 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
                 self.wfile.write(status)
             return False
             
-        elif self.server.file and urllib.unquote_plus(parsed_url.path)=='/'+self.server.file.path:
+        elif self.server.file and urllib.unquote(parsed_url.path)=='/'+self.server.file.path:
             self._offset=0
             size,mime = self._file_info()
             range=None  # @ReservedAssignment
