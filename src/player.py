@@ -12,6 +12,8 @@ from opensubtitle import OpenSubtitles
 import urlparse
 import re
 import time
+import socket
+import urllib
 logger=logging.getLogger('player')
 import subprocess
 from distutils.spawn import find_executable
@@ -94,7 +96,8 @@ class Player(object):
         else:
             if not base.endswith(os.sep):
                 base+=os.sep
-            params.append(urlparse.urljoin(base, f.path))
+            p=urllib.quote(f.path) if re.match('^https?://',base) else f.path
+            params.append(urlparse.urljoin(base, p))
             sin=open(os.devnull, 'rb')
         self._proc=subprocess.Popen(params, 
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
@@ -239,8 +242,70 @@ class MPlayer(Player):
         return ['-ss', '%0.1f'%time]
 
 class Vlc(Player):
-    HTTP_PORT=4448
-    OPTIONS=['--no-video-title-show','--extraintf', 'http', '--http-host', '127.0.0.1', '--http-port', '4448']
+    RC_PORT=4212
+    OPTIONS=['--no-video-title-show','--extraintf', 'rc', '--rc-host', 'localhost:%d'%RC_PORT]
+    class Poller(Thread):
+        def __init__(self, cb, live):
+            Thread.__init__(self,name='Position poller')
+            self.daemon=True
+            self._cb=cb
+            self._live=live
+            start=time.time()
+            
+            # wait for vlc to listen on cli socket
+            while True:
+                try:
+                    time.sleep(1)
+                    self._socket=socket.create_connection(('localhost', Vlc.RC_PORT))
+                    break
+                except socket.error,e:
+                    if time.time()-start>10:
+                        raise e
+                    
+            self._reader=self._socket.makefile('rb')
+            for i in xrange(2):
+                l=self._reader.readline()
+                logger.debug('VLC CLI - %s',l)
+            self.position=0
+            self.start()
+        
+        digits=re.compile(r'\d+')    
+        def run(self):
+            while self._live():
+                try:
+                    self._socket.send('get_time\n')
+                    ans=self._reader.readline()
+                except socket.error,e:
+                    logger.warn('Socket error in VLC poller - %s',e)
+                #logger.debug('ANS %s', ans)
+                pos=self.digits.search(ans)
+                if pos:
+                    pos=int(pos.group(0))
+                    if abs(self.position - pos)>=1 and self._cb:
+                        self._cb(pos)
+                           
+                time.sleep(1)
+                
+        def close(self):
+            try:
+                self._reader.close()
+                self._socket.close()
+            except:
+                logger.warn('Error closing VLC poller')
+                
+    def __init__(self, player, on_play_time_change=None):
+        Player.__init__(self, player, on_play_time_change=on_play_time_change)
+        self._poller=None
+    
+    def start(self, f, base, stdin, sub_lang=None, start_time=None, always_choose_subtitles=False):
+        Player.start(self, f, base, stdin, sub_lang=sub_lang, start_time=start_time, always_choose_subtitles=always_choose_subtitles)
+        self._poller=Vlc.Poller(self._on_play_time_change, self.is_playing)
+    
+    def close(self):
+        Player.close(self)
+        if self._poller:
+            self._poller.close()
+
     def subs_option(self, subs_file):
         return ['--sub-file=%s'%subs_file]
     

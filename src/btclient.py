@@ -223,7 +223,7 @@ class BTClient(BaseClient):
         self._hash = None
         self._url=None
         
-        if args and args.debug_log:
+        if args and args.debug_log and args.trace:
             self.add_monitor_listener(self.debug_download_queue)
             self.add_dispatcher_listener(self.debug_alerts)
     
@@ -568,6 +568,7 @@ def main(args=None):
     p.add_argument('--listen-port-min', type=int, default=6881, help='Bitorrent input port range - minimum port')
     p.add_argument('--listen-port-max', type=int, default=6891, help='Bitorrent input port range - maximum port')
     p.add_argument('--choose-subtitles',  action="store_true", help="Always manually choose subtitles (otherwise will try to use best match in many cases)" )
+    p.add_argument('--trace', action='store_true', help='More detailed debug logging')
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)
