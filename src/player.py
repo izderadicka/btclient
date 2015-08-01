@@ -13,6 +13,7 @@ import urlparse
 import re
 import time
 import socket
+import sys
 import urllib
 logger=logging.getLogger('player')
 import subprocess
@@ -46,10 +47,10 @@ class Player(object):
             return ''.join(self._log)
         
     @staticmethod
-    def create(player,on_play_time_change=None):
-        executable=find_executable(player)
+    def create(player,player_path,on_play_time_change=None):
+        executable=find_executable(player, player_path)
         if not executable:
-                msg= "Cannot find player %s on path"%player
+                msg= "Cannot find player %s on path %s" % (player, str(player_path))
                 raise Exception(msg)
         if player=='mplayer':
             return MPlayer(executable,on_play_time_change)
@@ -103,7 +104,7 @@ class Player(object):
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
                                     env=env, 
                                     stdin=sin,
-                                    close_fds=True)
+                                    close_fds=sys.platform!='win32')
         self.start_log()
         self._started.set()
     

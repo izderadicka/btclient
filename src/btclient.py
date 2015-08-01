@@ -553,7 +553,8 @@ def main(args=None):
     p.add_argument("url", help="Torrent file, link to file or magnet link")
     p.add_argument("-d", "--directory", default="./", help="directory to save download files")
     p.add_argument("-p", "--player", default="mplayer", choices=["mplayer","vlc"], help="Video player")
-    p.add_argument("--port", type=int, default=5001,help="Port for http server")
+    p.add_argument("--player-path", default=None, help="Video player path (for Windows)")
+    p.add_argument("--port", type=int, default=5001, help="Port for http server")
     p.add_argument("--debug-log", default='',help="File for debug logging")
     p.add_argument("--stdin", action='store_true', help='sends video to player via stdin (no seek then)')
     p.add_argument("--print-pieces", action="store_true", help="Prints map of downloaded pieces and ends (X is downloaded piece, O is not downloaded)")
@@ -617,13 +618,14 @@ def stream(args, client_class, resolver_class=None):
         if sig:    
             logger.info('Exiting by signal %d', sig)
             sys.exit(0)
-    signal.signal(signal.SIGHUP, on_exit)
-    signal.signal(signal.SIGTERM, on_exit)
+    if sys.platform!='win32':
+        signal.signal(signal.SIGHUP, on_exit)
+        signal.signal(signal.SIGTERM, on_exit)
     try:
             
         
         if  not args.stream:
-            player=Player.create(args.player,c.update_play_time)
+            player=Player.create(args.player,args.player_path,c.update_play_time)
         
         server=None
         #test if port if free, otherwise find free
