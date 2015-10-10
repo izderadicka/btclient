@@ -10,6 +10,7 @@ import urlparse
 import time
 import os.path
 import adecaptcha.clslib as clslib
+import re
 urlparse
 
 class UlozTo(Resolver):
@@ -37,6 +38,8 @@ class UlozTo(Resolver):
         
         xapca = self._client.load_json("http://www.ulozto.net/reloadXapca.php", {"rnd": str(int(time.time()))}, method='get')
         sound_url=xapca.get('sound') 
+        if not re.match('^https?:', sound_url):
+            sound_url='http:'+sound_url
         sound_ext=os.path.splitext(urlparse.urlsplit(sound_url).path)[1]
         if not sound_url:
             raise PluginError('No sound captcha')
