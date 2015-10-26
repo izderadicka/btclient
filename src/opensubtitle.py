@@ -145,11 +145,11 @@ class OpenSubtitles(object):
                     else:
                         logger.debug('No subtitles found for file %s in language %s',filename,lang)
                         return
-                except urllib2.HTTPError,e:
+                except (urllib2.HTTPError, IOError),e:
                     retries-=1
                     if retries<=0:
                         raise e
-                    logger.debug('Retrying to load subtitles due to HTTP error %d, remains %d attempts', e.code, retries)
+                    logger.debug('Retrying to load subtitles due to error %s, %d attempts remains', e, retries)
                     time.sleep(1)
     
     def download(self, filename, filesize=None, filehash=None, can_choose=True):

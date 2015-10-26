@@ -277,9 +277,12 @@ class BTClient(BaseClient):
         self._th.set_piece_deadline(pc, dl,lt.deadline_flags.alert_when_available)
         logger.debug("Set deadline %d for piece %d", dl,pc)
         
-        # we do not need to download pieces that are lower then current index, but last two pieces are special because players sometime look at end of file
-        if idx==0 and (self._file.last_piece - pc) > 2:
-            for i in xrange(pc-1):
+        # we do not need to download pieces that are lower then current index, 
+        # but last x pieces are special because players often  look at end of file
+        # for mp4 metadata - so in this case,  we do not want to stop download of previous pieces
+        tail_pieces=9
+        if idx==0 and (self._file.last_piece - pc) > tail_pieces:
+            for i in xrange(self._file.first_piece,pc-1):
                 self._th.piece_priority(i,0)
                 self._th.reset_piece_deadline(i)
                 
