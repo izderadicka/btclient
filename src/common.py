@@ -9,7 +9,7 @@ import logging
 from threading import Lock,Event, Thread
 import copy
 from hachoir_metadata import extractMetadata
-from hachoir_parser import guessParser
+from hachoir_parser import createParser
 import hachoir_core.config as hachoir_config
 from hachoir_core.stream.input import InputIOStream
 from opensubtitle import OpenSubtitles
@@ -19,7 +19,7 @@ from cache import Cache
 import time
 import shutil
 import urlparse
-from StringIO import StringIO
+from multiprocessing import Process, Value
 
 logger=logging.getLogger('common')
 hachoir_config.quiet = True
@@ -29,14 +29,23 @@ def enum(**enums):
 
 TerminalColor=enum(default='\033[39m',green='\033[32m', red='\033[31m', yellow='\033[33m')
 
+
 def get_duration(fn):
-    # We need to provide just begining of file otherwise hachoir might try to read all file
-    with open(fn,'rb') as f:
-        s=StringIO(f.read(1024*64))
-    p=guessParser(InputIOStream(s, filename=unicode(fn), tags=[]))
+    p=createParser(unicode(fn))
     m=extractMetadata(p)
     if m:
         return m.getItem('duration',0) and m.getItem('duration',0).value
+
+# This function should be called in separate process because hachoir has problem with memory - might just 
+# allocate  too much memory so it;s better to run in separate process 
+# Also we need several tries because we might not have enough of file content yet (file is being downloaded)
+def resolve_duration(fname,val):
+    for _ in xrange(5):
+        dur=get_duration(fname)
+        if dur:
+            val.value=dur.total_seconds()
+            break
+        time.sleep(30)
 
 def debug_fn(fn):    
     def _fn(*args,**kwargs):
@@ -375,8 +384,8 @@ class AbstractFile(object):
         self._lock=Lock()
         self.first_piece=0
         self.last_piece=self.first_piece + (max(size-1,0)) // piece_size
-        
-        self._rate=None
+        self._duration_resolver=None
+        self._duration=Value('d',0)
         self._piece_duration=None
         
     def add_cursor(self,c):
@@ -437,9 +446,11 @@ class AbstractFile(object):
             
     @property    
     def duration(self):
-        if not hasattr(self,'_duration'):
-            self._duration= get_duration(self._full_path) if os.path.exists(self._full_path) else 0
-        return self._duration or 0
+        if not self._duration_resolver and  os.path.exists(self._full_path):
+            # we should try resolve duration asynchronously
+            self._duration_resolver=Process(target=resolve_duration, args=(self._full_path, self._duration))
+            self._duration_resolver.start()
+        return self._duration.value
     
     @property
     def piece_duration_ms(self):
@@ -451,11 +462,9 @@ class AbstractFile(object):
     
     @property    
     def byte_rate(self):
-        if not self._rate:
-            d=self.duration
-            if d:
-                self._rate= self.size / d.total_seconds()
-        return self._rate
+        if self.duration:
+            return  self.size / self.duration
+        return 0
     
     def __str__(self):
         return self.path
