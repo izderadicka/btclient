@@ -9,13 +9,18 @@ concurrently and then stream it to the player. Can work with file sharing servic
 to resolve file link. 
 
 ```
-usage: btclient.py [-h] [-d DIRECTORY] [-p {mplayer,vlc}] [--port PORT]
+usage: btclient.py [-h] [-d DIRECTORY] [-p {mplayer,vlc}]
+                   [--player-path PLAYER_PATH] [--port PORT]
                    [--debug-log DEBUG_LOG] [--stdin] [--print-pieces]
                    [-s SUBTITLES] [--stream] [--no-resume] [-q]
                    [--delete-on-finish] [--clear-older CLEAR_OLDER]
                    [--bt-download-limit BT_DOWNLOAD_LIMIT]
                    [--bt-upload-limit BT_UPLOAD_LIMIT]
+                   [--listen-port-min LISTEN_PORT_MIN]
+                   [--listen-port-max LISTEN_PORT_MAX] [--choose-subtitles]
+                   [--trace]
                    url
+
 
 ```
 
@@ -26,7 +31,7 @@ From torrent file chooses the biggest video file, starts to download it  and sen
 
 Can also download subtitles for current video file (option -s - uses opensubtitles.org API).
 
-Requires libtorrent (1.0.4) and its python bindings,  gnome-terminal and hachoir python libraries.
+Requires libtorrent (1.0.x) and its python bindings,  gnome-terminal and hachoir python libraries.
 Optionally  beautifulsoup and adecaptcha for plugins.
 
 

@@ -2,9 +2,9 @@
 
 #install libtorrent manually - needs libboost development libs 
 sudo apt-get install -y autoconf libtool libssl-dev libboost-system-dev libboost-python-dev #libboost-chrono-dev  libboost-random-dev
-# Do not use trunk, but latest 1.0 version, trunk was not working
-sudo apt-get install -y subversion
-svn export svn://svn.code.sf.net/p/libtorrent/code/branches/RC_1_0 libtorrent-code
+# Do not use master, but latest 1.0.x version in RC_1_0 branch
+sudo apt-get install -y git
+git clone -b RC_1_0 --depth 1 https://github.com/arvidn/libtorrent.git libtorrent-code
 cd libtorrent-code
 ./autotool.sh
 ./configure --enable-python-binding

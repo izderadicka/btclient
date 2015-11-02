@@ -5,6 +5,6 @@ virtualenv:
 python:
   - "2.7"
 # command to install dependencies
-install: "./install.sh b"
+install: "./install.sh"
 # command to run tests
 script: python tests/all.py
