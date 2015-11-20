@@ -17,20 +17,34 @@ import struct
 import time
 logger=logging.getLogger('opensubtitles')
 
+# We need special Transport to support HTTP proxy
 class Urllib2Transport(xmlrpclib.Transport):
     def __init__(self, opener=None, https=False, use_datetime=0):
         xmlrpclib.Transport.__init__(self, use_datetime)
         self.opener = opener or urllib2.build_opener()
         self.https = https
+        self.user_agent = OpenSubtitles.USER_AGENT
     
-    def request(self, host, handler, request_body, verbose=0):
+    def single_request(self, host, handler, request_body, verbose=0):
         proto = ('http', 'https')[bool(self.https)]
+        if request_body:
+            request_body=xmlrpclib.gzip_encode(request_body)
         req = urllib2.Request('%s://%s%s' % (proto, host, handler), request_body)
         req.add_header('User-agent', self.user_agent)
+        req.add_header("Accept-Encoding", "gzip")
+        if request_body:
+            req.add_header("Content-Encoding", 'gzip')
         self.verbose = verbose
-        return self.parse_response(self.opener.open(req))
+        resp=self.opener.open(req)
+        if resp.headers.get("Content-Encoding") == 'gzip':
+            resp = gzip.GzipFile(fileobj=StringIO(resp.read()),  mode='rb')
+        return self.parse_response(resp)
 
 
+class OpenSubError(Exception):
+    pass
+class OpenSubProblem(Exception):
+    pass
 
 class OpenSubtitles(object):
     USER_AGENT='BTClient v%s'%__version__
@@ -45,7 +59,7 @@ class OpenSubtitles(object):
         
         
     def login(self):
-        res=self._proxy.LogIn(self._user, self._pwd, 'en', self.USER_AGENT)
+        res=self._proxy.LogIn(self._user or '', self._pwd or '', 'en', self.USER_AGENT)
         self._parse_status(res)
         token=res.get('token')
         if token:
@@ -129,7 +143,7 @@ class OpenSubtitles(object):
     
     @staticmethod
     def download_if_not_exists(filename, lang, filesize=None, filehash=None, sub_ext='srt',
-                               can_choose=True, overwrite=False, retries=3):
+                               can_choose=True, overwrite=False, retries=3, user='', pwd=''):
         sfile=OpenSubtitles._sub_file(filename, lang, sub_ext)
         if os.path.exists(sfile) and os.stat(sfile).st_size>0 and not overwrite:
             logger.debug('subs %s are already downloaded', sfile)
@@ -137,7 +151,7 @@ class OpenSubtitles(object):
         else:
             while True:
                 try:
-                    with OpenSubtitles(lang) as opensub:
+                    with OpenSubtitles(lang, user, pwd) as opensub:
                         res=  opensub.download(filename,filesize,filehash,can_choose)
                     if res:
                         logger.debug('Subtitles %s downloaded', res)
@@ -145,7 +159,10 @@ class OpenSubtitles(object):
                     else:
                         logger.debug('No subtitles found for file %s in language %s',filename,lang)
                         return
-                except (urllib2.HTTPError, IOError),e:
+                except OpenSubError,e:
+                    logger.error('Cannot get subtitles: %s',e)
+                    return
+                except (urllib2.HTTPError, IOError, OpenSubProblem),e:
                     retries-=1
                     if retries<=0:
                         raise e
@@ -181,7 +198,23 @@ class OpenSubtitles(object):
     
     def download_link(self, filename, link, ext):
         out_file=OpenSubtitles._sub_file(filename, self._lang, ext)
-        res=urllib2.urlopen(link, timeout=10)
+        req = urllib2.Request(link,  headers={'User-agent':self.USER_AGENT})
+        res=urllib2.urlopen(req, timeout=10)
+        assert res.code == 200, 'Unsucessful download should raise exception'
+        
+        limit=res.headers.get('Download-Quota', '')
+        if limit:
+            try:
+                limit=int(limit)
+                if limit <= 0:
+                    raise OpenSubError('Download limit expired')
+            except ValueError:
+                pass
+        
+        ct=res.headers['Content-Type']
+        if not ct == 'application/x-gzip':
+            text=res.read() if ct.startswith('text') else ''
+            raise OpenSubProblem('Not Gzip file: %s %s', ct, text)   
         data=StringIO(res.read())
         data.seek(0)
         res.close()
@@ -209,10 +242,11 @@ class OpenSubtitles(object):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.logout()
  
-def down(f, lang, overwrite=False):
+def down(f, lang, overwrite=False, user='', pwd=''):
     filesize,filehash=calc_hash(f)
     OpenSubtitles.download_if_not_exists(f, lang, filesize=filesize, 
-                        filehash=filehash, can_choose=True, overwrite=overwrite)
+                        filehash=filehash, can_choose=True, overwrite=overwrite, 
+                        user=user, pwd=pwd )
        
 def calc_hash(f):  
     if not os.access(f, os.R_OK):
@@ -222,10 +256,10 @@ def calc_hash(f):
         filehash=OpenSubtitles.hash_file(fs, filesize)
     return filesize,filehash  
          
-def list_subs(f, lang):  
+def list_subs(f, lang, user='', pwd=''):  
     import pprint
     filesize,filehash=calc_hash(f)
-    with OpenSubtitles(lang) as opensub:
+    with OpenSubtitles(lang,user, pwd) as opensub:
         res=opensub.search(f, filesize, filehash)
         res=map(lambda x: {'SubFileName':x['SubFileName'], 
                            'SubDownloadsCnt':x['SubDownloadsCnt'],
@@ -244,11 +278,13 @@ if __name__=='__main__':
     p.add_argument("--lang", default='eng', help="Language")
     p.add_argument("--debug", action="store_true", help="Print debug messages")
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing subtitles ")
+    p.add_argument("-u", "--user",  help="Opensubtitles user (optional")
+    p.add_argument("-p", "--password",  help="Opensubtitles user password ")
     args=p.parse_args()
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
     if args.download:
-        down(args.video_file, args.lang, args.overwrite)
+        down(args.video_file, args.lang, args.overwrite, args.user, args.password)
     else:
-        list_subs(args.video_file, args.lang)
+        list_subs(args.video_file, args.lang, args.user, args.password)
     
