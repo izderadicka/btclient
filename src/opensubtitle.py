@@ -15,6 +15,7 @@ from subprocess import Popen
 import subprocess
 import struct
 import time
+import base64
 logger=logging.getLogger('opensubtitles')
 
 # We need special Transport to support HTTP proxy
@@ -66,6 +67,7 @@ class OpenSubtitles(object):
             self._token=token
         else:
             raise xmlrpclib.Fault('NO_TOKEN','No token!') 
+        
     def _parse_status(self, res):
         if res.has_key('status'):
             code = res['status'].split()[0]
@@ -128,7 +130,6 @@ class OpenSubtitles(object):
         return returnedhash 
     
     def choose(self, data):
-        null=f = open(os.devnull,"w")
         items=[]
         for l in data:
             items.append(l['SubDownloadLink'])
@@ -136,9 +137,9 @@ class OpenSubtitles(object):
             items.append(l['SubDownloadsCnt'])
         
         p=subprocess.Popen('zenity --list --title "Select subtitles" --text "Select best matching subtitles" --width 1024 --height 600 --column Link --column Name --column Downloads --hide-column=1', 
-                 stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=null, shell=True)  
+                 stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)  
         res,_=p.communicate(u'\n'.join(items).encode('utf-8'))
-        null.close()
+        res=res.split('|')[0]  #this is fix for zenity bug - double click returns column twice separated by |
         return res if res.startswith('http') else None
     
     @staticmethod
@@ -194,7 +195,22 @@ class OpenSubtitles(object):
             link=sub['SubDownloadLink']
             ext=sub['SubFormat']
         if link:
+            logger.debug('Download from this link: %s', link)
             return self.download_link(filename, link, ext)
+    
+    
+    def download_subtitle(self, filename, sub_id, ext):
+        out_file=OpenSubtitles._sub_file(filename, self._lang, ext)
+        res =self._proxy.DownloadSubtitles(self._token,[sub_id,])
+        self._parse_status(res)
+        data=res.get('data')
+        t=data[0]['data']
+        text=xmlrpclib.gzip_decode(base64.b64decode(t))
+        with open(out_file, 'wb') as f:
+            f.write(text)
+            
+        return out_file
+    
     
     def download_link(self, filename, link, ext):
         out_file=OpenSubtitles._sub_file(filename, self._lang, ext)
@@ -213,7 +229,7 @@ class OpenSubtitles(object):
         
         ct=res.headers['Content-Type']
         if not ct == 'application/x-gzip':
-            text=res.read() if ct.startswith('text') else ''
+            text=res.read(1000) if ct.startswith('text') else ''
             raise OpenSubProblem('Not Gzip file: %s %s', ct, text)   
         data=StringIO(res.read())
         data.seek(0)
@@ -242,10 +258,10 @@ class OpenSubtitles(object):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.logout()
  
-def down(f, lang, overwrite=False, user='', pwd=''):
+def down(f, lang, overwrite=False, user='', pwd='', choose=True):
     filesize,filehash=calc_hash(f)
     OpenSubtitles.download_if_not_exists(f, lang, filesize=filesize, 
-                        filehash=filehash, can_choose=True, overwrite=overwrite, 
+                        filehash=filehash, can_choose=choose, overwrite=overwrite, 
                         user=user, pwd=pwd )
        
 def calc_hash(f):  
@@ -278,13 +294,15 @@ if __name__=='__main__':
     p.add_argument("--lang", default='eng', help="Language")
     p.add_argument("--debug", action="store_true", help="Print debug messages")
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing subtitles ")
+    p.add_argument("--always-choose", action="store_true", help="Always choose subtitles")
     p.add_argument("-u", "--user",  help="Opensubtitles user (optional")
     p.add_argument("-p", "--password",  help="Opensubtitles user password ")
     args=p.parse_args()
     if args.debug:
         logging.basicConfig(level=logging.DEBUG)
     if args.download:
-        down(args.video_file, args.lang, args.overwrite, args.user, args.password)
+        down(args.video_file, args.lang, args.overwrite, args.user, args.password, 
+             choose='always' if args.always_choose else True)
     else:
         list_subs(args.video_file, args.lang, args.user, args.password)
     
