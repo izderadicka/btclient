@@ -52,7 +52,7 @@ class HTTPLoader(object):
         self._client=urllib2.build_opener(urllib2.HTTPCookieProcessor(CookieJar()))
         self.url=self.resolve_file_url(resolver_class, url)
         if not self.url:
-            raise HTTPLoader.Error('Urlwas not resolved to file link')
+            raise HTTPLoader.Error('Url was not resolved to file link')
         
     def resolve_file_url(self, resolver_class, url):
         r=resolver_class(self)
@@ -69,13 +69,14 @@ class HTTPLoader(object):
             raise HTTPLoader.Error('Invalid range header')
         return int(m.group(1)), int(m.group(2)), int(m.group(3))
     
+    RETRIES=5
     def open(self, url, data=None, headers={}, method='get' ):
         hdr={'User-Agent':self.user_agent}
         hdr.update(headers)
         url,post_args=self._encode_data(url, data, method)
         req=urllib2.Request(url,post_args,headers=headers)
         res=None
-        retries=5
+        retries=self.RETRIES
         while retries:   
             try:
                 res=self._client.open(req, timeout=10)
@@ -86,7 +87,7 @@ class HTTPLoader(object):
         
                 logging.warn('Retry on (%s)  due to IO or HTTPError (%s) ', threading.current_thread().name,e)
                 retries-=1
-                time.sleep(1)
+                time.sleep(self.RETRIES-retries)
         if not res:
             raise HTTPLoader.Error('Cannot open resource %s' % url)
         return res
@@ -305,7 +306,7 @@ class HTClient(BaseClient):
         
                     
         if not self._file.is_complete:
-            c0=c0 or HTTPLoader(uri, 0, self.resolver_class)
+            c0= HTTPLoader(uri, 0, self.resolver_class)
             self._pool=Pool(self.piece_size, [c0],
                          self.update_piece, speed_limit=self.resolver_class.SPEED_LIMIT if hasattr(self.resolver_class,'SPEED_LIMIT') else None)
             def gen_loader(i):
