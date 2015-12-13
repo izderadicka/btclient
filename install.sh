@@ -1,6 +1,7 @@
 #!/bin/bash
 
 #install libtorrent manually - needs libboost development libs 
+sudo apt-get update
 sudo apt-get install -y autoconf libtool libssl-dev libboost-system-dev libboost-python-dev #libboost-chrono-dev  libboost-random-dev
 # Do not use master, but latest 1.0.x version in RC_1_0 branch
 sudo apt-get install -y git
