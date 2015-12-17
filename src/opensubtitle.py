@@ -115,6 +115,7 @@ class OpenSubtitles(object):
         
         for _x in range(65536/bytesize): 
             buffer = f.read(bytesize)  # @ReservedAssignment
+            assert len(buffer) == 8
             (l_value,)= struct.unpack(longlongformat, buffer)  
             hash += l_value 
             hash = hash & 0xFFFFFFFFFFFFFFFF #to remain as 64bit number  @ReservedAssignment
