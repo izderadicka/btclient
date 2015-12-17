@@ -474,7 +474,7 @@ class Resolver(object):
     SPEED_LIMIT=None #kB/s
     THREADS=4
     def __init__(self, loader):
-        self._client=loader
+        self.client=loader
     def resolve(self, url):
         return url
     

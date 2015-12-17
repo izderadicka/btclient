@@ -20,7 +20,7 @@ class UlozTo(Resolver):
     def resolve(self, url):
         s=urlparse.urlsplit(url)
         base_url=urlparse.urlunsplit((s.scheme,s.netloc,'','',''))
-        pg=self._client.load_page(url)
+        pg=self.client.load_page(url)
         form=pg.find('form', {'id':'frm-downloadDialog-freeDownloadForm'})
         action=form.attrs.get('action')
         if not action:
@@ -36,23 +36,25 @@ class UlozTo(Resolver):
         if not all([key in data for key in ('captcha_value', 'timestamp', 'salt', 'hash')]):
             raise PluginError('Required inputs are missing')
         
-        xapca = self._client.load_json("http://www.ulozto.net/reloadXapca.php", {"rnd": str(int(time.time()))}, method='get')
+        xapca = self.client.load_json("http://www.ulozto.net/reloadXapca.php", {"rnd": str(int(time.time()))}, method='get')
         sound_url=xapca.get('sound') 
         if not re.match('^https?:', sound_url):
             sound_url='http:'+sound_url
         sound_ext=os.path.splitext(urlparse.urlsplit(sound_url).path)[1]
         if not sound_url:
             raise PluginError('No sound captcha')
-        audio=self._client.open(sound_url, method='get', stream=True)
-        cfg_file=os.path.join(os.path.split(clslib.__file__)[0], 'ulozto.cfg')
-        captcha= clslib.classify_audio_file(audio.raw, cfg_file, ext=sound_ext)
-        audio.close()
+        audio=self.client.open(sound_url, method='get', stream=True)
+        try:
+            cfg_file=os.path.join(os.path.split(clslib.__file__)[0], 'ulozto.cfg')
+            captcha= clslib.classify_audio_file(audio.raw, cfg_file, ext=sound_ext)
+        finally:
+            audio.close()
         if not captcha and len(captcha)!=4:
             raise PluginError('Invalid decoded captcha')
         
         data.update({'timestamp': xapca['timestamp'], 'salt': xapca['salt'], 'hash': xapca['hash'], 'captcha_value': captcha})
         
-        res=self._client.open(urlparse.urljoin(base_url, action),data, method='post', stream=True)  
+        res=self.client.open(urlparse.urljoin(base_url, action),data, method='post', stream=True)  
         type_header=res.headers.get('Content-Type')
         res.close()
         if not type_header.startswith('video') and not type_header.startswith('application/octetstream'):
