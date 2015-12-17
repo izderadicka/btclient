@@ -2,3 +2,4 @@ hachoir-metadata
 hachoir-core 
 hachoir-parser
 beautifulsoup4
+requests>=2.2.1

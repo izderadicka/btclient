@@ -1,34 +1,21 @@
-'''
-Created on May 3, 2015
-
-@author: ivan
-'''
-
-import urllib2
+import requests
+from requests import Session
+from requests.packages.urllib3.util import Retry
+from requests.adapters import HTTPAdapter
 import os.path
 import pickle
 from common import AbstractFile, BaseClient, Hasher, Resolver, TerminalColor
 import logging
-from cookielib import CookieJar
 from collections import namedtuple
 import random
-from httplib import BadStatusLine, IncompleteRead
-import socket
 import time
 import re
 import Queue
 import collections
 from threading import Lock, Thread
-import urlparse
 import sys
 import threading
-from urllib import urlencode
 from bs4 import BeautifulSoup
-import zlib
-from io import BytesIO
-import gzip
-import json
-import shutil
 from collections import deque
 
 logger=logging.getLogger('htclient')
@@ -43,13 +30,15 @@ class HTTPLoader(object):
                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.75.14 (KHTML, like Gecko) Version/7.0.3 Safari/7046A194A']
     
     PARSER='lxml'#'html5lib'#'html.parser'#'lxml'
+    RETRIES=5
     class Error(Exception):
         pass
     def __init__(self,url,id, resolver_class=None):
         self.id=id
-        self.user_agent=self._choose_ua()
         resolver_class=resolver_class or Resolver
-        self._client=urllib2.build_opener(urllib2.HTTPCookieProcessor(CookieJar()))
+        self._client=Session()
+        self._client.mount('http', HTTPAdapter(max_retries=Retry(total=self.RETRIES, status_forcelist=[500,503])))
+        self._client.headers.update({'User-Agent':self._choose_ua()})
         self.url=self.resolve_file_url(resolver_class, url)
         if not self.url:
             raise HTTPLoader.Error('Url was not resolved to file link')
@@ -69,105 +58,73 @@ class HTTPLoader(object):
             raise HTTPLoader.Error('Invalid range header')
         return int(m.group(1)), int(m.group(2)), int(m.group(3))
     
-    RETRIES=5
-    def open(self, url, data=None, headers={}, method='get' ):
-        hdr={'User-Agent':self.user_agent}
-        hdr.update(headers)
-        url,post_args=self._encode_data(url, data, method)
-        req=urllib2.Request(url,post_args,headers=headers)
-        res=None
-        retries=self.RETRIES
-        while retries:   
-            try:
-                res=self._client.open(req, timeout=10)
-                break
-            except (IOError, urllib2.HTTPError, BadStatusLine, IncompleteRead, socket.timeout) as e:
-                if isinstance(e, urllib2.HTTPError) and hasattr(e,'code') and str(e.code)=='404':
-                    raise HTTPLoader.Error('Url %s not found',url)
+    
+    def open(self, url, data=None, headers={}, method='get' , stream=False ):
+        try:
+            if method=='post':
+                res=self._client.post(url, data=data, headers=headers, timeout=30, stream=stream)
+            else:
+                res=self._client.get(url, params=data, headers=headers, timeout=30, stream=stream)
+        except  requests.exceptions.RequestException , e:
+            raise HTTPLoader.Error('Cannot open resource %s due to error %s' % (url,e))
         
-                logging.warn('Retry on (%s)  due to IO or HTTPError (%s) ', threading.current_thread().name,e)
-                retries-=1
-                time.sleep(self.RETRIES-retries)
-        if not res:
-            raise HTTPLoader.Error('Cannot open resource %s' % url)
         return res
     
     def load_piece(self, piece_no, piece_size):
         start=piece_no*piece_size
         headers={'Range': 'bytes=%d-'%start}
-        res=self.open(self.url, headers=headers)
-        allow_range_header=res.info().getheader('Accept-Ranges')
-        if allow_range_header and allow_range_header.lower()=='none':
-            raise HTTPLoader.Error('Ranges are not supported')
-        
-        size_header=res.info().getheader('Content-Length')
-        total_size = int(size_header) if size_header else None
-        
-        range_header=res.info().getheader('Content-Range')
-        if not range_header:
-            if piece_no and not total_size:
+        res=self.open(self.url, headers=headers, stream=True)
+        try:
+            allow_range_header=res.headers.get('Accept-Ranges')
+            if allow_range_header and allow_range_header.lower()=='none':
                 raise HTTPLoader.Error('Ranges are not supported')
-            else:
-                from_pos, to_pos, size= 0, total_size-1, total_size
-        else:
-            from_pos, to_pos, size = self._parse_range(range_header)
-        
-        type_header=res.info().getheader('Content-Type')
-        
-        if not type_header:
-            raise HTTPLoader.Error('Content Type is missing')
-        
-        data=res.read(piece_size)
-        
-        res.close()
-        return Piece(piece_no,data,size,type_header)
-    @staticmethod
-    def decode_data(res):
-        header=res.info()
-        data=res.read()
-        if header.get('Content-Encoding')=='gzip':
-            tmp_stream=gzip.GzipFile(fileobj=BytesIO(data))
-            data=tmp_stream.read()
             
-        elif header.get('Content-Encoding')=='deflate':
-            data = zlib.decompress(data)
-        return data
-    
-    def _encode_data(self,url, data, method='post'):
-        if not data:
-            return url,None
-        if method.lower()== 'post':
-            return url, urlencode(data)
-        else:
-            return url+'?'+urlencode(data), None
+            size_header=res.headers.get('Content-Length')
+            total_size = int(size_header) if size_header else None
+            
+            range_header=res.headers.get('Content-Range')
+            if not range_header:
+                if piece_no and not total_size:
+                    raise HTTPLoader.Error('Ranges are not supported')
+                else:
+                    from_pos, to_pos, size= 0, total_size-1, total_size
+            else:
+                from_pos, to_pos, size = self._parse_range(range_header)
+            
+            type_header=res.headers.get('Content-Type')
+            
+            if not type_header:
+                raise HTTPLoader.Error('Content Type is missing')
+            
+            data=res.raw.read(piece_size)
+            return Piece(piece_no,data,size,type_header)
+        finally:
+            res.close()
         
+    
+   
+    
     def load_page(self, url, data=None, method='get'):
         res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate"}, method=method)
         #Content-Type:"text/html; charset=utf-8"
-        type_header=res.info().getheader('Content-Type')
+        type_header=res.headers.get('Content-Type')
         if not type_header.startswith('text/html'):
             raise HTTPLoader.Error("%s is not HTML page"%url)
         #Content-Encoding:"gzip"
-        data=HTTPLoader.decode_data(res)
-        pg=BeautifulSoup(data, HTTPLoader.PARSER)
+        pg=BeautifulSoup(res.text, HTTPLoader.PARSER)
         return pg
     
     def load_json(self,url,data,method='get'):
         res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate", 'X-Requested-With':'XMLHttpRequest'}, method=method)
-        type_header=res.info().getheader('Content-Type')
+        type_header=res.headers.get('Content-Type')
         if not type_header.startswith('application/json'):
             raise HTTPLoader.Error("%s is not JSON"%url)
         #Content-Encoding:"gzip"
-        data=HTTPLoader.decode_data(res)
-        return json.loads(data,encoding='utf8')
+        return res.json(encoding='utf8')
     
-    def get_redirect(self,url,data,method='get'):
-        pass
+    def close(self):
+        self._client.close()
         
-        
-        
-        
-                                          
 
 class PriorityQueue(Queue.PriorityQueue):
     NORMAL_PRIORITY=99

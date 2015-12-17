@@ -43,20 +43,22 @@ class UlozTo(Resolver):
         sound_ext=os.path.splitext(urlparse.urlsplit(sound_url).path)[1]
         if not sound_url:
             raise PluginError('No sound captcha')
-        audio=self._client.open(sound_url, method='get')
+        audio=self._client.open(sound_url, method='get', stream=True)
         cfg_file=os.path.join(os.path.split(clslib.__file__)[0], 'ulozto.cfg')
-        captcha= clslib.classify_audio_file(audio, cfg_file, ext=sound_ext)
+        captcha= clslib.classify_audio_file(audio.raw, cfg_file, ext=sound_ext)
+        audio.close()
         if not captcha and len(captcha)!=4:
             raise PluginError('Invalid decoded captcha')
         
         data.update({'timestamp': xapca['timestamp'], 'salt': xapca['salt'], 'hash': xapca['hash'], 'captcha_value': captcha})
         
-        res=self._client.open(urlparse.urljoin(base_url, action),data, method='post')  
-        type_header=res.info().getheader('Content-Type')
-        
+        res=self._client.open(urlparse.urljoin(base_url, action),data, method='post', stream=True)  
+        type_header=res.headers.get('Content-Type')
+        res.close()
         if not type_header.startswith('video') and not type_header.startswith('application/octetstream'):
+            print res.text
             raise PluginError('Not a video link - mime %s' % type_header)
-        file_url=res.geturl()
+        file_url=res.url
         res.close()
         return file_url
     
