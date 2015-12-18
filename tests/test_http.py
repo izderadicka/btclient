@@ -77,7 +77,7 @@ class Test(unittest.TestCase):
         with f.create_cursor() as reader:
             ref=reader.read()
             
-        self.assertEqual(data, ref, "Diffrent")
+        self.assertEqual(data, ref, "Different")
         
         buf=StringIO()
         with htfile.create_cursor() as reader:

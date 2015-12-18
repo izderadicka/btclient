@@ -59,12 +59,12 @@ class HTTPLoader(object):
         return int(m.group(1)), int(m.group(2)), int(m.group(3))
     
     
-    def open(self, url, data=None, headers={}, method='get' , stream=False ):
+    def open(self, url, data=None, headers={}, method='get' , stream=False, redirect=True ):
         try:
             if method=='post':
-                res=self._client.post(url, data=data, headers=headers, timeout=30, stream=stream)
+                res=self._client.post(url, data=data, headers=headers, timeout=30, stream=stream, allow_redirects=redirect)
             else:
-                res=self._client.get(url, params=data, headers=headers, timeout=30, stream=stream)
+                res=self._client.get(url, params=data, headers=headers, timeout=30, stream=stream, allow_redirects=redirect)
         except  requests.exceptions.RequestException , e:
             raise HTTPLoader.Error('Cannot open resource %s due to error %s' % (url,e))
         
@@ -72,34 +72,33 @@ class HTTPLoader(object):
     
     def load_piece(self, piece_no, piece_size):
         start=piece_no*piece_size
-        headers={'Range': 'bytes=%d-'%start}
-        res=self.open(self.url, headers=headers, stream=True)
-        try:
-            allow_range_header=res.headers.get('Accept-Ranges')
-            if allow_range_header and allow_range_header.lower()=='none':
-                raise HTTPLoader.Error('Ranges are not supported')
-            
-            size_header=res.headers.get('Content-Length')
-            total_size = int(size_header) if size_header else None
-            
-            range_header=res.headers.get('Content-Range')
-            if not range_header:
-                if piece_no and not total_size:
-                    raise HTTPLoader.Error('Ranges are not supported')
-                else:
-                    from_pos, to_pos, size= 0, total_size-1, total_size
-            else:
-                from_pos, to_pos, size = self._parse_range(range_header)
-            
-            type_header=res.headers.get('Content-Type')
-            
-            if not type_header:
-                raise HTTPLoader.Error('Content Type is missing')
-            
-            data=res.raw.read(piece_size)
-            return Piece(piece_no,data,size,type_header)
-        finally:
-            res.close()
+        end=start+piece_size-1
+        headers={'Range': 'bytes=%d-%d'%(start,end)}
+        res=self.open(self.url, headers=headers)
+        if res.status_code!=206:
+            raise HTTPLoader.Error('Ranges are not supported (status code)')
+        
+        allow_range_header=res.headers.get('Accept-Ranges')
+        if allow_range_header and allow_range_header.lower()=='none':
+            raise HTTPLoader.Error('Ranges are not supported (accept-ranges none')
+        
+        size_header=res.headers.get('Content-Length')
+        total_size = int(size_header) if size_header else None
+        
+        range_header=res.headers.get('Content-Range')
+        if not range_header:
+                raise HTTPLoader.Error('Ranges are not supported (missing content-range)')
+        else:
+            from_pos, to_pos, size = self._parse_range(range_header)
+        
+        type_header=res.headers.get('Content-Type')
+        
+        if not type_header:
+            raise HTTPLoader.Error('Content Type is missing')
+        
+        data=res.content
+        assert len(data)<= piece_size
+        return Piece(piece_no,data,size,type_header)
         
     
    

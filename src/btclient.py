@@ -42,7 +42,7 @@ VIDEO_EXTS={'.avi':'video/x-msvideo','.mp4':'video/mp4','.mkv':'video/x-matroska
             '.m4v':'video/mp4','.mov':'video/quicktime', '.mpg':'video/mpeg','.ogv':'video/ogg', 
             '.ogg':'video/ogg', '.webm':'video/webm', '.ts': 'video/mp2t', '.3gp':'video/3gpp'}
 
-RANGE_RE=re.compile(r'bytes=(\d+)-')
+RANGE_RE=re.compile(r'bytes=(\d+)\s*-\s*(\d+)?')
 
 #offset from end to download first
 FILE_TAIL=10000
@@ -52,10 +52,10 @@ def parse_range(range):  # @ReservedAssignment
         m=RANGE_RE.match(range)
         if m:
             try:
-                return int(m.group(1))
+                return int(m.group(1)), int(m.group(2)) if m.group(2) else None
             except:
                 pass
-    return 0
+    return 0, None
 
 class StreamServer(SocketServer.ThreadingMixIn, htserver.HTTPServer):
     daemon_threads = True
@@ -149,8 +149,9 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
             if self.server.allow_range:
                 range=parse_range(self.headers.get('Range', None))  # @ReservedAssignment
                 if range:
-                    self._offset=range
-                    range=(range,size-1,size)  # @ReservedAssignment
+                    self._offset=range[0]
+                    end=range[1] if range[1] else size-1
+                    range=(range[0],end,size)  # @ReservedAssignment
                     logger.debug('Request range %s - (header is %s', range,self.headers.get('Range', None) )
             self.send_resp_header(mime, size, range, only_header)
             return True

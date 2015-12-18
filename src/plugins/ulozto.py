@@ -11,6 +11,7 @@ import time
 import os.path
 import adecaptcha.clslib as clslib
 import re
+from StringIO import StringIO
 urlparse
 
 class UlozTo(Resolver):
@@ -43,25 +44,24 @@ class UlozTo(Resolver):
         sound_ext=os.path.splitext(urlparse.urlsplit(sound_url).path)[1]
         if not sound_url:
             raise PluginError('No sound captcha')
-        audio=self.client.open(sound_url, method='get', stream=True)
-        try:
-            cfg_file=os.path.join(os.path.split(clslib.__file__)[0], 'ulozto.cfg')
-            captcha= clslib.classify_audio_file(audio.raw, cfg_file, ext=sound_ext)
-        finally:
-            audio.close()
+        audio=self.client.open(sound_url, method='get')
+        cfg_file=os.path.join(os.path.split(clslib.__file__)[0], 'ulozto.cfg')
+        captcha= clslib.classify_audio_file(StringIO(audio.content), cfg_file, ext=sound_ext)
         if not captcha and len(captcha)!=4:
             raise PluginError('Invalid decoded captcha')
         
         data.update({'timestamp': xapca['timestamp'], 'salt': xapca['salt'], 'hash': xapca['hash'], 'captcha_value': captcha})
         
-        res=self.client.open(urlparse.urljoin(base_url, action),data, method='post', stream=True)  
-        type_header=res.headers.get('Content-Type')
+        res=self.client.open(urlparse.urljoin(base_url, action),data, method='post', redirect=False)  
+        if not res.status_code == 303:
+            raise PluginError('Url nor resolved (no redirect)')
+        file_url=res.headers['location']
+        res=self.client.open(file_url, method='get', redirect=False, stream=True)  
         res.close()
-        if not type_header.startswith('video') and not type_header.startswith('application/octetstream'):
-            print res.text
-            raise PluginError('Not a video link - mime %s' % type_header)
-        file_url=res.url
-        res.close()
+        if res.status_code>=400:
+            raise PluginError('Got HTTP %d error on url %s'% (res.status_code, file_url))
+        if res.status_code>=300:
+            file_url=res.headers['location']
         return file_url
     
     @staticmethod
