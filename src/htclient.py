@@ -262,7 +262,7 @@ class HTClient(BaseClient):
         
                     
         if not self._file.is_complete:
-            c0= HTTPLoader(uri, 0, self.resolver_class)
+            c0= c0 or HTTPLoader(uri, 0, self.resolver_class)
             self._pool=Pool(self.piece_size, [c0],
                          self.update_piece, speed_limit=self.resolver_class.SPEED_LIMIT if hasattr(self.resolver_class,'SPEED_LIMIT') else None)
             def gen_loader(i):
