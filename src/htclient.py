@@ -65,6 +65,7 @@ class HTTPLoader(object):
                 res=self._client.post(url, data=data, headers=headers, timeout=30, stream=stream, allow_redirects=redirect)
             else:
                 res=self._client.get(url, params=data, headers=headers, timeout=30, stream=stream, allow_redirects=redirect)
+            res.raise_for_status()
         except  requests.exceptions.RequestException , e:
             raise HTTPLoader.Error('Cannot open resource %s due to error %s' % (url,e))
         
