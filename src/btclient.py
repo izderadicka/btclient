@@ -147,8 +147,9 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
             size,mime = self._file_info()
             range=None  # @ReservedAssignment
             if self.server.allow_range:
-                range=parse_range(self.headers.get('Range', None))  # @ReservedAssignment
-                if range:
+                range_header=self.headers.get('Range', None)
+                if range_header:
+                    range=parse_range(range_header)  # @ReservedAssignment
                     self._offset=range[0]
                     end=range[1] if range[1] else size-1
                     range=(range[0],end,size)  # @ReservedAssignment
