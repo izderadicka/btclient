@@ -110,13 +110,15 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
             with self.server.file.create_cursor(self._offset) as f: 
                 send_something=False
                 while True:
-                    buf= f.read(1024) 
+                    block=min(self._len, 1024)
+                    buf= f.read(block) 
+                    self._len-len(buf or '')
                     if not send_something and logger.level<= logging.DEBUG:
                         logger.debug('Start sending data')
                         send_something=True
                     if buf:
                         self.wfile.write(buf)
-                    else:
+                    if not buf or self._len <=0:
                         if logger.level<= logging.DEBUG:
                             logger.debug('Finished sending data')
                         break
@@ -145,14 +147,17 @@ class BTFileHandler(htserver.BaseHTTPRequestHandler):
         elif self.server.file and urllib.unquote(parsed_url.path)=='/'+self.server.file.path:
             self._offset=0
             size,mime = self._file_info()
+            self._len=size
             range=None  # @ReservedAssignment
             if self.server.allow_range:
                 range_header=self.headers.get('Range', None)
                 if range_header:
                     range=parse_range(range_header)  # @ReservedAssignment
-                    self._offset=range[0]
+                    start=range[0]
+                    self._offset=start
                     end=range[1] if range[1] else size-1
-                    range=(range[0],end,size)  # @ReservedAssignment
+                    self._len=end-start+1
+                    range=(start,end,size)  # @ReservedAssignment
                     logger.debug('Request range %s - (header is %s', range,self.headers.get('Range', None) )
             self.send_resp_header(mime, size, range, only_header)
             return True
