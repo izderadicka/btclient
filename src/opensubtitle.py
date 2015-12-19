@@ -11,7 +11,6 @@ import os.path
 import gzip
 from StringIO import StringIO
 import logging
-from subprocess import Popen
 import subprocess
 import struct
 import time
@@ -139,7 +138,8 @@ class OpenSubtitles(object):
             items.append(l['SubDownloadsCnt'])
         
         p=subprocess.Popen('zenity --list --title "Select subtitles" --text "Select best matching subtitles" --width 1024 --height 600 --column Link --column Name --column Downloads --hide-column=1', 
-                 stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)  
+                 stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, 
+                 close_fds=sys.platform!='win32')  
         res,_=p.communicate(u'\n'.join(items).encode('utf-8'))
         res=res.split('|')[0]  #this is fix for zenity bug - double click returns column twice separated by |
         return res if res.startswith('http') else None
