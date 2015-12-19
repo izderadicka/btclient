@@ -591,6 +591,7 @@ def main(args=None):
         logger.setLevel(logging.DEBUG)
         h=logging.handlers.RotatingFileHandler(args.debug_log)
         logger.addHandler(h)
+        logging.getLogger('requests').setLevel(logging.ERROR)
     else:
         logger.setLevel(logging.CRITICAL)
         logger.addHandler(logging.StreamHandler())
