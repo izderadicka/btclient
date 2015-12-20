@@ -48,11 +48,20 @@ class HTTPLoader(object):
     def __init__(self,url,id, resolver_class=None):
         self.id=id
         self.user_agent=self._choose_ua()
-        resolver_class=resolver_class or Resolver
+        self._resolver_class=resolver_class or Resolver
+        self._url=url
+        self.url=None
+        self._client=None
+        
+    def init(self):
         self._client=urllib2.build_opener(urllib2.HTTPCookieProcessor(CookieJar()))
-        self.url=self.resolve_file_url(resolver_class, url)
+        self.url=self.resolve_file_url(self._resolver_class, self._url)
         if not self.url:
             raise HTTPLoader.Error('Url was not resolved to file link')
+        
+    def resolved(self):
+        return self.url is not None
+    
         
     def resolve_file_url(self, resolver_class, url):
         r=resolver_class(self)
@@ -232,6 +241,7 @@ class Pool(object):
         adder.start()
         
     def work(self, loader):
+        loader.init()
         while self._running:
             pc=self._queue.get_piece()
             if not self._running:
@@ -299,6 +309,7 @@ class HTClient(BaseClient):
             self._file=HTFile(path, self._base_path, 0, self.piece_size, self.request_piece)
         except HTFile.UnknownSize:
             c0=HTTPLoader(uri, 0, self.resolver_class)
+            c0.init()
             p=c0.load_piece(0, self.piece_size)
             self._file=HTFile(path, self._base_path, p.total_size, self.piece_size, self.request_piece)
             self.update_piece(0, p.data)
@@ -306,13 +317,10 @@ class HTClient(BaseClient):
         
                     
         if not self._file.is_complete:
-            c0= HTTPLoader(uri, 0, self.resolver_class)
-            self._pool=Pool(self.piece_size, [c0],
+            loaders = [HTTPLoader(uri, i, self.resolver_class) for i in xrange(self._no_threads)]
+            self._pool=Pool(self.piece_size, loaders,
                          self.update_piece, speed_limit=self.resolver_class.SPEED_LIMIT if hasattr(self.resolver_class,'SPEED_LIMIT') else None)
-            def gen_loader(i):
-                return HTTPLoader(uri,i,self.resolver_class)
-            for i in xrange(1,self._no_threads):
-                self._pool.add_worker_async(i, gen_loader, (i,))
+            
             #get remaining pieces with normal priority
             for i in xrange(1, self._file.last_piece+1):
                 if not self._file.pieces[i]:

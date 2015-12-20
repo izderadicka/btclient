@@ -21,6 +21,7 @@ class Test(unittest.TestCase):
             import adecaptcha
             self.assertTrue(cls)
             loader=HTTPLoader(url, 0, cls)
+            loader.init()
         except ImportError:
             print >>sys.stderr, 'WARNIG - adecaptcha not install ulozto plugin will not be available'
         
