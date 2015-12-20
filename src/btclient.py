@@ -681,7 +681,11 @@ def stream(args, client_class, resolver_class=None):
                 player.start(f,base, stdin=sin,sub_lang=args.subtitles,start_time=start_time,
                              always_choose_subtitles=args.choose_subtitles)
                 logger.debug('Started media player for %s', f)
-            c.set_on_file_ready(start_play)
+            def start_play_async(f,finished):
+                t=Thread(name='Start player', target=start_play, args=(f,finished))
+                t.daemon=True
+                t.start()
+            c.set_on_file_ready(start_play_async)
         else:
             def print_url(f,done):
                 server.set_file(f)
