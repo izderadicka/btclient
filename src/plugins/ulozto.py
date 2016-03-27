@@ -54,7 +54,7 @@ class UlozTo(Resolver):
         res=self._client.open(urlparse.urljoin(base_url, action),data, method='post')  
         type_header=res.info().getheader('Content-Type')
         
-        if not type_header.startswith('video') and not type_header.startswith('application/octetstream'):
+        if not type_header.startswith('video') and not type_header.startswith('application/octet-stream'):
             raise PluginError('Not a video link - mime %s' % type_header)
         file_url=res.geturl()
         res.close()
