@@ -31,7 +31,7 @@ TerminalColor=enum(default='\033[39m',green='\033[32m', red='\033[31m', yellow='
 
 
 def get_duration(fn):
-    p=createParser(unicode(fn))
+    p=createParser(unicode(fn, 'utf-8'))
     m=extractMetadata(p)
     if m:
         return m.getItem('duration',0) and m.getItem('duration',0).value
