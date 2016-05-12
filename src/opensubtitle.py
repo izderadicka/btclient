@@ -228,9 +228,9 @@ class OpenSubtitles(object):
                 pass
         
         ct=res.headers['Content-Type']
-        if not ct == 'application/x-gzip':
+        if not (ct == 'application/x-gzip' or    ct=='application/force-download'):
             text=res.read(1000) if ct.startswith('text') else ''
-            raise OpenSubProblem('Not Gzip file: %s %s', ct, text)   
+            raise OpenSubProblem('Not Gzip file: %s %s' % (ct, text))   
         data=StringIO(res.read())
         data.seek(0)
         res.close()

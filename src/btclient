@@ -5,7 +5,7 @@ SCRIPT=`ls -l $0 | awk '{print $11}'`
 INST_DIR=`dirname $SCRIPT`
 fi
 
-PLAYER=mplayer
+PLAYER=vlc
 if [ "$2" = "vlc" ] ; then
 PLAYER=vlc
 fi
