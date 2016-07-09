@@ -14,7 +14,7 @@ import re
 urlparse
 
 class UlozTo(Resolver):
-    URL_PATTERN=r'http://(?:www\.)?(uloz\.to|ulozto\.(cz|sk|net)|bagruj.cz|zachowajto.pl)/(?:live/)?(?P<id>\w+/[^/?]*)'
+    URL_PATTERN=r'https://(?:www\.)?(uloz\.to|ulozto\.(cz|sk|net)|bagruj.cz|zachowajto.pl)/(?:live/)?(?P<id>[!\w]+/[^/?]*)'
     SPEED_LIMIT=300
     THREADS=4
     def resolve(self, url):
@@ -36,10 +36,10 @@ class UlozTo(Resolver):
         if not all([key in data for key in ('captcha_value', 'timestamp', 'salt', 'hash')]):
             raise PluginError('Required inputs are missing')
         
-        xapca = self._client.load_json("http://www.ulozto.net/reloadXapca.php", {"rnd": str(int(time.time()))}, method='get')
+        xapca = self._client.load_json("https://www.ulozto.net/reloadXapca.php", {"rnd": str(int(time.time()))}, method='get')
         sound_url=xapca.get('sound') 
         if not re.match('^https?:', sound_url):
-            sound_url='http:'+sound_url
+            sound_url='https:'+sound_url
         sound_ext=os.path.splitext(urlparse.urlsplit(sound_url).path)[1]
         if not sound_url:
             raise PluginError('No sound captcha')

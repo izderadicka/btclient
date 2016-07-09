@@ -122,6 +122,7 @@ class OpenSubtitles(object):
         f.seek(max(0,filesize-65536)) 
         for _x in range(65536/bytesize): 
             buffer = f.read(bytesize)  # @ReservedAssignment
+            assert len(buffer) == bytesize, 'Invalid block size %d on block %d' % (len(buffer), _x)
             (l_value,)= struct.unpack(longlongformat, buffer)  
             hash += l_value 
             hash = hash & 0xFFFFFFFFFFFFFFFF  # @ReservedAssignment         
