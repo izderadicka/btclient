@@ -91,9 +91,9 @@ class Cache(object):
         else:
             raise ValueError('Not BT magnet link')
         
-    def play_position(self, info_hash, secs):
-        self._last_pos[info_hash]=secs
+    def play_position(self, info_hash, path='', secs=0):
+        self._last_pos[info_hash+path]=secs
         
-    def get_last_position(self, info_hash):
-        return self._last_pos.get(info_hash) or 0
+    def get_last_position(self, info_hash, path=''):
+        return self._last_pos.get(info_hash+path) or 0
         

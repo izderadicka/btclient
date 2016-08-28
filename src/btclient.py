@@ -27,6 +27,7 @@ import plugins  # @UnresolvedImport
 import signal
 import json
 import shutil
+import subprocess
 
 logger=logging.getLogger()
 
@@ -206,12 +207,14 @@ class BTClient(BaseClient):
                 state=pickle.load(f)
                 self._ses.load_state(state)
         #self._ses.set_alert_mask(lt.alert.category_t.progress_notification)
+        self._choose_file_flag = False
         if args:
             s=lt.session_settings()
             s.download_rate_limit=int(round(args.bt_download_limit*1024))
             s.upload_rate_limit=int(round(args.bt_upload_limit*1024))
             self._ses.set_settings(s)
             self._ses.listen_on(args.listen_port_min, args.listen_port_max)
+            self._choose_file_flag = args.choose_file 
         else:
             self._ses.listen_on(6881, 6891)
         self._start_services()
@@ -243,15 +246,37 @@ class BTClient(BaseClient):
             self.hash=Hasher(self._file, self._on_file_ready)
             
     def _choose_file(self, files, search=None):   
+        #TODO - we want to ge
         videos=filter(lambda f: VIDEO_EXTS.has_key(os.path.splitext(f.path)[1]), files)
         if search:
-            videos=filter(lambda f: re.match(search, f.path), videos)
+            videos=filter(lambda f: re.search(search, f.path, re.UNICODE|re.IGNORECASE), videos)
         if not videos:
             raise Exception('No video files in torrent')
-        f = sorted(videos, key=lambda f:f.size)[-1]
+        
+        if self._choose_file_flag and len(videos)>1:
+            #filter small files - these would be samples or ads - filter out all videos that are smaller then 10% of biggest video
+            max_size=reduce(lambda prev,f: f.size if f.size>prev else prev, videos, 0)
+            videos = filter(lambda f: float(f.size) / max_size > 0.1, videos)
+            if len(videos) == 1:
+                f=videos[0]
+            else:
+                idx=self._choose_file_dialog(videos)
+                f=videos[idx]
+        else:
+            f = sorted(videos, key=lambda f:f.size)[-1]
+        
         i = files.index(f)
         f.index=i
         return f
+    
+    def _choose_file_dialog(self, files):
+        p=subprocess.Popen('zenity --list --title "Select video file" --text "Select best matching subtitles" --width 1024 --height 600 --column Index --column Name --column Size --hide-column=1', 
+                 stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, 
+                 close_fds=sys.platform!='win32')  
+        choices = map(lambda i,f: '%d\n%s\n%d'%(i, f.path.replace('"',''),f.size), range(len(files)), files)
+        res,_=p.communicate(u'\n'.join(choices).encode('utf-8'))
+        res=res.split('|')[0]  #this is fix for zenity bug - double click returns column twice separated by |
+        return int(res or 0)
             
     def _meta_ready(self, meta):
         fs=meta.files()
@@ -579,6 +604,7 @@ def main(args=None):
     p.add_argument('--listen-port-max', type=int, default=6891, help='Bitorrent input port range - maximum port')
     p.add_argument('--choose-subtitles',  action="store_true", help="Always manually choose subtitles (otherwise will try to use best match in many cases)" )
     p.add_argument('--trace', action='store_true', help='More detailed debug logging')
+    p.add_argument('--choose-file', action='store_true', help='Manually choose if there are more video files in torrent (otherwise chooses biggest automatically)')
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)

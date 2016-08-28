@@ -191,11 +191,11 @@ class BaseClient(object):
         raise NotImplementedError()
         
     def update_play_time(self, playtime):
-        self._cache.play_position(self.unique_file_id, playtime)
+        self._cache.play_position(self.unique_file_id, self.file.path, playtime)
     
     @property    
     def last_play_time(self):
-        return self._cache.get_last_position(self.unique_file_id)
+        return self._cache.get_last_position(self.unique_file_id, self.file.path)
     
     def add_monitor_listener(self, cb):
         self._monitor.add_listener(cb)
