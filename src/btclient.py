@@ -274,7 +274,7 @@ class BTClient(BaseClient):
                  stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, 
                  close_fds=sys.platform!='win32')  
         choices = map(lambda i,f: '%d\n%s\n%d'%(i, f.path.replace('"',''),f.size), range(len(files)), files)
-        res,_=p.communicate(u'\n'.join(choices).encode('utf-8'))
+        res,_=p.communicate(b'\n'.join(choices).decode('ascii', errors='ignore'))
         res=res.split('|')[0]  #this is fix for zenity bug - double click returns column twice separated by |
         return int(res or 0)
             

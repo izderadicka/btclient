@@ -107,13 +107,25 @@ class OpenSubtitles(object):
                  
         longlongformat = '<q'  # little-endian long long
         bytesize = struct.calcsize(longlongformat) 
-            
         hash = filesize  # @ReservedAssignment
+        
         if filesize < 65536 * 2: 
             raise ValueError("SizeError") 
         
+        def read_exact():
+            to_read=bytesize
+            res=b''
+            while to_read>0:
+                data = f.read(to_read)
+                if not data:
+                    break
+                res+=data
+                to_read-=len(data)
+            return res
+        
         for _x in range(65536/bytesize): 
-            buffer = f.read(bytesize)  # @ReservedAssignment
+            buffer = read_exact()  # @ReservedAssignment
+            assert len(buffer) == bytesize, 'First piece invalid block size %d on block %d' % (len(buffer), _x)
             (l_value,)= struct.unpack(longlongformat, buffer)  
             hash += l_value 
             hash = hash & 0xFFFFFFFFFFFFFFFF #to remain as 64bit number  @ReservedAssignment
@@ -121,8 +133,8 @@ class OpenSubtitles(object):
         
         f.seek(max(0,filesize-65536)) 
         for _x in range(65536/bytesize): 
-            buffer = f.read(bytesize)  # @ReservedAssignment
-            assert len(buffer) == bytesize, 'Invalid block size %d on block %d' % (len(buffer), _x)
+            buffer = read_exact()  # @ReservedAssignment
+            assert len(buffer) == bytesize, 'Last piece invalid block size %d on block %d' % (len(buffer), _x)
             (l_value,)= struct.unpack(longlongformat, buffer)  
             hash += l_value 
             hash = hash & 0xFFFFFFFFFFFFFFFF  # @ReservedAssignment         

@@ -55,10 +55,14 @@ class Cache(object):
         
     def file_complete(self, torrent, url=None):
         info_hash=str(torrent.info_hash())
-        nt=lt.create_torrent(torrent)
+        nt=lt.create_torrent(torrent).generate()
+        #this is a fix for issue https://github.com/arvidn/libtorrent/issues/945
+        #however proper fix is to migrate to latest 1.1
+        if not nt['info']:
+            nt['info'] = lt.bdecode(torrent.metadata())
         tname=self._tname(info_hash)
         with open(tname, 'wb') as f:
-            f.write(lt.bencode(nt.generate()))
+            f.write(lt.bencode(nt))
         if url:
             self.save(url,info_hash)
            
