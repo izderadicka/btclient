@@ -21,7 +21,7 @@ class UlozTo(Resolver):
         s=urlparse.urlsplit(url)
         base_url=urlparse.urlunsplit((s.scheme,s.netloc,'','',''))
         pg=self._client.load_page(url)
-        form=pg.find('form', {'id':'frm-downloadDialog-freeDownloadForm'})
+        form=pg.find('form', {'id':'frm-download-freeDownloadTab-freeDownloadForm'})
         action=form.attrs.get('action')
         if not action:
             raise PluginError('Form has no action')
