@@ -8,9 +8,9 @@ fi
 PLAYER=vlc
 if [ "$2" = "vlc" ] ; then
 PLAYER=vlc
-fi
-
-if [ "$2" = "mplayer" ] ; then
+elif [ "$2" = "mplayer" ] ; then
 PLAYER=mplayer
+elif [ "$2" = "mpv" ]; then
+PLAYER=mpv
 fi
 gnome-terminal --disable-factory --geometry=120x3 --hide-menubar -x python $INST_DIR/btclient.py -d ~/Downloads/torrents --debug-log /tmp/btclient.log -p $PLAYER -s eng --bt-download-limit 1000 --bt-upload-limit 400  --choose-subtitles --choose-file "$1" 

@@ -586,7 +586,7 @@ def main(args=None):
     p=argparse.ArgumentParser()
     p.add_argument("url", help="Torrent file, link to file or magnet link")
     p.add_argument("-d", "--directory", default="./", help="directory to save download files")
-    p.add_argument("-p", "--player", default="mplayer", choices=["mplayer","vlc"], help="Video player")
+    p.add_argument("-p", "--player", default="mplayer", choices=["mplayer","vlc", "mpv"], help="Video player")
     p.add_argument("--player-path", default=None, help="Video player path")
     p.add_argument("--port", type=int, default=5001, help="Port for http server")
     p.add_argument("--debug-log", default='',help="File for debug logging")

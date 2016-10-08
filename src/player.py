@@ -15,6 +15,7 @@ import time
 import socket
 import sys
 import urllib
+import json
 logger=logging.getLogger('player')
 import subprocess
 from distutils.spawn import find_executable
@@ -56,6 +57,8 @@ class Player(object):
             return MPlayer(executable,on_play_time_change)
         elif player=='vlc':
             return Vlc(executable,on_play_time_change)
+        elif player == 'mpv':
+            return Mpv(executable, on_play_time_change)
         else:
             raise ValueError('Invalid player name %s'%player)
         
@@ -241,6 +244,84 @@ class MPlayer(Player):
     
     def start_time_option(self, time):
         return ['-ss', '%0.1f'%time]
+    
+class Mpv(Player):        
+    class Poller(Thread):
+        def __init__(self, cb, live):
+            Thread.__init__(self,name='Position poller')
+            self.daemon=True
+            self._cb=cb
+            self._live=live
+            start=time.time()
+            
+            # wait for mpv to listen on json ipc socket
+            while True:
+                try:
+                    time.sleep(1)
+                    self._socket =  socket.socket(socket.AF_UNIX)
+                    self._socket.connect(Mpv.INPUT_SOCKET)
+                    break
+                except socket.error,e:
+                    if time.time()-start>10:
+                        raise e
+                    
+            self._reader=self._socket.makefile('rb')
+            self.position=0
+            self.start()
+        
+        def run(self):
+            while self._live():
+                try:
+                    logger.debug('poller-sending time request')
+                    cmd = '{ "command": ["get_property", "playback-time"] }\n'
+                    self._socket.send(cmd)
+                    ans=self._reader.readline()
+                except socket.error,e:
+                    logger.warn('Socket error in mpv poller - %s',e)
+                #logger.debug('ANS %s', ans)
+                try:
+                    ans=json.loads(ans)
+                except ValueError as e:
+                    logger.warn('Reply error %s', e)
+                else:
+                    logger.debug('poller - response %s', ans)
+                    if ans.get('error') == 'success' and ans.get('data'):
+                        pos = float(ans['data'])
+                        if abs(self.position - pos)>=1 and self._cb:
+                            self._cb(pos)
+                        self.position = pos
+                           
+                time.sleep(1)
+                
+        def close(self):
+            try:
+                self._reader.close()
+                self._socket.close()
+            except:
+                logger.warn('Error closing VLC poller')
+            
+    INPUT_SOCKET='/tmp/mpv.socket'
+    OPTIONS=['--quiet', '--input-ipc-server=%s'%INPUT_SOCKET]
+    
+    def __init__(self, player, on_play_time_change=None):
+        Player.__init__(self, player, on_play_time_change=on_play_time_change)
+        self._poller=None
+    
+    def start(self, f, base, stdin, sub_lang=None, start_time=None, always_choose_subtitles=False):
+        Player.start(self, f, base, stdin, sub_lang=sub_lang, start_time=start_time, always_choose_subtitles=always_choose_subtitles)
+        self._poller=Mpv.Poller(self._on_play_time_change, self.is_playing)
+    
+    def close(self):
+        Player.close(self)
+        if self._poller:
+            self._poller.close()    
+    
+        
+    def subs_option(self, subs_file):
+        return ['--sub-file=%s'% subs_file]
+    
+    def start_time_option(self, time):
+        return ['--start=%0.1f'%time]
 
 class Vlc(Player):
     RC_PORT=4212
@@ -284,6 +365,7 @@ class Vlc(Player):
                     pos=int(pos.group(0))
                     if abs(self.position - pos)>=1 and self._cb:
                         self._cb(pos)
+                    self.position = pos
                            
                 time.sleep(1)
                 
