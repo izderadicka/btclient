@@ -272,7 +272,7 @@ class Mpv(Player):
         def run(self):
             while self._live():
                 try:
-                    logger.debug('poller-sending time request')
+                    #logger.debug('poller-sending time request')
                     cmd = '{ "command": ["get_property", "playback-time"] }\n'
                     self._socket.send(cmd)
                     ans=self._reader.readline()
@@ -284,7 +284,7 @@ class Mpv(Player):
                 except ValueError as e:
                     logger.warn('Reply error %s', e)
                 else:
-                    logger.debug('poller - response %s', ans)
+                    #logger.debug('poller - response %s', ans)
                     if ans.get('error') == 'success' and ans.get('data'):
                         pos = float(ans['data'])
                         if abs(self.position - pos)>=1 and self._cb:
