@@ -4,31 +4,24 @@ Created on May 3, 2015
 @author: ivan
 '''
 
-import urllib2
+import requests
+from requests.packages.urllib3.util import Retry 
 import os.path
 import pickle
 from common import AbstractFile, BaseClient, Hasher, Resolver, TerminalColor
 import logging
-from cookielib import CookieJar
 from collections import namedtuple
 import random
-from httplib import BadStatusLine, IncompleteRead
-import socket
+#from httplib import BadStatusLine, IncompleteRead
 import time
 import re
 import Queue
 import collections
 from threading import Lock, Thread
-import urlparse
 import sys
 import threading
-from urllib import urlencode
 from bs4 import BeautifulSoup
-import zlib
-from io import BytesIO
-import gzip
 import json
-import shutil
 from collections import deque
 
 logger=logging.getLogger('htclient')
@@ -48,20 +41,17 @@ class HTTPLoader(object):
     def __init__(self,url,id, resolver_class=None):
         self.id=id
         self.user_agent=self._choose_ua()
-        self._resolver_class=resolver_class or Resolver
-        self._url=url
-        self.url=None
-        self._client=None
-        
-    def init(self):
-        self._client=urllib2.build_opener(urllib2.HTTPCookieProcessor(CookieJar()))
-        self.url=self.resolve_file_url(self._resolver_class, self._url)
+        resolver_class=resolver_class or Resolver
+        self._client=requests.Session()
+        self._client.adapters.clear()
+        self._client.mount('http', requests.adapters.HTTPAdapter(max_retries=Retry(total=5, 
+                                                                    backoff_factor = 5.0/16,
+                                                                    status_forcelist=[500, 502, 503])))
+        self._client.headers['User-Agent'] = self.user_agent
+        self.url=self.resolve_file_url(resolver_class, url)
         if not self.url:
             raise HTTPLoader.Error('Url was not resolved to file link')
-        
-    def resolved(self):
-        return self.url is not None
-    
+
         
     def resolve_file_url(self, resolver_class, url):
         r=resolver_class(self)
@@ -78,105 +68,77 @@ class HTTPLoader(object):
             raise HTTPLoader.Error('Invalid range header')
         return int(m.group(1)), int(m.group(2)), int(m.group(3))
     
-    RETRIES=5
-    def open(self, url, data=None, headers={}, method='get' ):
-        hdr={'User-Agent':self.user_agent}
-        hdr.update(headers)
-        url,post_args=self._encode_data(url, data, method)
-        req=urllib2.Request(url,post_args,headers=headers)
-        res=None
-        retries=self.RETRIES
-        while retries:   
-            try:
-                res=self._client.open(req, timeout=10)
-                break
-            except (IOError, urllib2.HTTPError, BadStatusLine, IncompleteRead, socket.timeout) as e:
-                if isinstance(e, urllib2.HTTPError) and hasattr(e,'code') and str(e.code)=='404':
-                    raise HTTPLoader.Error('Url %s not found',url)
+    def open(self, url, data=None, headers={}, method='get', streaming = False ):
+        assert(method == 'get' or method == 'post')
         
-                logging.warn('Retry on (%s)  due to IO or HTTPError (%s) ', threading.current_thread().name,e)
-                retries-=1
-                time.sleep(self.RETRIES-retries)
-        if not res:
-            raise HTTPLoader.Error('Cannot open resource %s' % url)
+        try:
+            res = self._client.request(method, url, params=data if method == 'get' else None, 
+                           data = data if method == 'post' else None,
+                           headers = headers, timeout = 10,
+                           stream = streaming)
+            res.raise_for_status()
+        
+        except Exception,e:
+            raise HTTPLoader.Error('Cannot open resource %s, error: %s' % (url,e))
         return res
     
     def load_piece(self, piece_no, piece_size):
         start=piece_no*piece_size
-        headers={'Range': 'bytes=%d-'%start}
+        end=(piece_no+1) * piece_size - 1
+        headers={'Range': 'bytes=%d-%d'% (start, end)}
         res=self.open(self.url, headers=headers)
-        allow_range_header=res.info().getheader('Accept-Ranges')
+        allow_range_header=res.headers.get('Accept-Ranges')
         if allow_range_header and allow_range_header.lower()=='none':
             raise HTTPLoader.Error('Ranges are not supported')
         
-        size_header=res.info().getheader('Content-Length')
+        size_header=res.headers.get('Content-Length')
         total_size = int(size_header) if size_header else None
         
-        range_header=res.info().getheader('Content-Range')
+        range_header=res.headers.get('Content-Range')
         if not range_header:
             if piece_no and not total_size:
                 raise HTTPLoader.Error('Ranges are not supported')
             else:
+                #assert total_size <= piece_size
                 from_pos, to_pos, size= 0, total_size-1, total_size
         else:
             from_pos, to_pos, size = self._parse_range(range_header)
         
-        type_header=res.info().getheader('Content-Type')
+        type_header=res.headers.get('Content-Type')
         
         if not type_header:
             raise HTTPLoader.Error('Content Type is missing')
         
-        data=res.read(piece_size)
+        data=res.content
+        if len(data) > piece_size:
+            logger.warn('Invalid piece, trunking, piece size is %s, but got %s', piece_size, len(data))
+            data=data[:piece_size]
         
         res.close()
         return Piece(piece_no,data,size,type_header)
-    @staticmethod
-    def decode_data(res):
-        header=res.info()
-        data=res.read()
-        if header.get('Content-Encoding')=='gzip':
-            tmp_stream=gzip.GzipFile(fileobj=BytesIO(data))
-            data=tmp_stream.read()
-            
-        elif header.get('Content-Encoding')=='deflate':
-            data = zlib.decompress(data)
-        return data
     
-    def _encode_data(self,url, data, method='post'):
-        if not data:
-            return url,None
-        if method.lower()== 'post':
-            return url, urlencode(data)
-        else:
-            return url+'?'+urlencode(data), None
-        
+    
     def load_page(self, url, data=None, method='get'):
         res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate"}, method=method)
         #Content-Type:"text/html; charset=utf-8"
-        type_header=res.info().getheader('Content-Type')
+        type_header=res.headers.get('Content-Type')
         if not type_header.startswith('text/html'):
             raise HTTPLoader.Error("%s is not HTML page"%url)
         #Content-Encoding:"gzip"
-        data=HTTPLoader.decode_data(res)
+        data=res.content
         pg=BeautifulSoup(data, HTTPLoader.PARSER)
         return pg
     
     def load_json(self,url,data,method='get'):
         res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate", 'X-Requested-With':'XMLHttpRequest'}, method=method)
-        type_header=res.info().getheader('Content-Type')
+        type_header=res.headers.get('Content-Type')
         if not type_header.startswith('application/json'):
             raise HTTPLoader.Error("%s is not JSON"%url)
         #Content-Encoding:"gzip"
-        data=HTTPLoader.decode_data(res)
+        data=res.content
         return json.loads(data,encoding='utf8')
-    
-    def get_redirect(self,url,data,method='get'):
-        pass
         
         
-        
-        
-                                          
 
 class PriorityQueue(Queue.PriorityQueue):
     NORMAL_PRIORITY=99
@@ -241,11 +203,6 @@ class Pool(object):
         adder.start()
         
     def work(self, loader):
-        try:
-            loader.init()
-        except Exception:
-            logger.exception('(%s) Loader init failed in thread %s',  threading.current_thread().name)
-            raise
         while self._running:
             pc=self._queue.get_piece()
             if not self._running:
@@ -313,7 +270,6 @@ class HTClient(BaseClient):
             self._file=HTFile(path, self._base_path, 0, self.piece_size, self.request_piece)
         except HTFile.UnknownSize:
             c0=HTTPLoader(uri, 0, self.resolver_class)
-            c0.init()
             p=c0.load_piece(0, self.piece_size)
             self._file=HTFile(path, self._base_path, p.total_size, self.piece_size, self.request_piece)
             self.update_piece(0, p.data)
@@ -321,10 +277,13 @@ class HTClient(BaseClient):
         
                     
         if not self._file.is_complete:
-            loaders = [HTTPLoader(uri, i, self.resolver_class) for i in xrange(self._no_threads)]
-            self._pool=Pool(self.piece_size, loaders,
+            c0=c0 or HTTPLoader(uri, 0, self.resolver_class)
+            self._pool=Pool(self.piece_size, [c0],
                          self.update_piece, speed_limit=self.resolver_class.SPEED_LIMIT if hasattr(self.resolver_class,'SPEED_LIMIT') else None)
-            
+            def gen_loader(i):
+                return HTTPLoader(uri,i,self.resolver_class)
+            for i in xrange(1,self._no_threads):
+                self._pool.add_worker_async(i, gen_loader, (i,))
             #get remaining pieces with normal priority
             for i in xrange(1, self._file.last_piece+1):
                 if not self._file.pieces[i]:

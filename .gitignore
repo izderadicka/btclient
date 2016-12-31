@@ -37,3 +37,4 @@ _$*
 /logs
 /samples
 /libtorrent-code
+/.cache/

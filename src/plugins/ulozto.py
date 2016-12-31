@@ -12,6 +12,7 @@ import os.path
 import adecaptcha.clslib as clslib
 import re
 import logging
+from io import BytesIO
 
 logger = logging.getLogger('ulozto-plugin')
 
@@ -69,7 +70,11 @@ class UlozTo(Resolver):
             sound_url='https:'+sound_url
         sound_ext=os.path.splitext(urlparse.urlsplit(sound_url).path)[1]
         try:
-            audio=self._client.open(sound_url, method='get')
+            audio_res=self._client.open(sound_url, method='get')
+            audio_bytes = audio_res.content
+            if len(audio_bytes) < 100:
+                raise ResolveSoftError('Invalid audio captcha, too small')
+            audio = BytesIO(audio_bytes)
         except self._client.Error,e:
             logger.exception('Cannot get audio captcha')
             raise ResolveSoftError('Cannot load audio captcha')
@@ -80,12 +85,12 @@ class UlozTo(Resolver):
         
         data.update({'timestamp': xapca['timestamp'], 'salt': xapca['salt'], 'hash': xapca['hash'], 'captcha_value': captcha})
         
-        res=self._client.open(urlparse.urljoin(base_url, action),data, method='post')  
-        type_header=res.info().getheader('Content-Type')
+        res=self._client.open(urlparse.urljoin(base_url, action),data, method='post', streaming=True)  
+        type_header=res.headers.get('Content-Type')
         
         if not type_header.startswith('video') and not type_header.startswith('application/octet-stream'):
             raise ResolveSoftError('Not resolved to a video link - mime %s' % type_header)
-        file_url=res.geturl()
+        file_url=res.url
         res.close()
         return file_url
     

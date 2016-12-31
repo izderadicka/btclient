@@ -15,13 +15,12 @@ class Test(unittest.TestCase):
         plugs=load_plugins()
         
     def test_ulozto(self):
-        url='http://www.ulozto.cz/xEtqWa87/jachyme-hod-ho-do-stroje-1974-mp4'
+        url='https://www.ulozto.cz/!0FIGa8hlWQyz/jachyme-hod-ho-do-stroje-1974-720x528-thyronx-mp4'
         cls=find_matching_plugin(url)
         try:
             import adecaptcha
             self.assertTrue(cls)
             loader=HTTPLoader(url, 0, cls)
-            loader.init()
         except ImportError:
             print >>sys.stderr, 'WARNIG - adecaptcha not install ulozto plugin will not be available'
         

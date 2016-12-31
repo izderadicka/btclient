@@ -47,7 +47,6 @@ class Test(unittest.TestCase):
         f=DummyFile(fname)
         piece_size=1024
         c=HTTPLoader(URL, 0)
-        c.init()
         first=c.load_piece(0, piece_size)
         self.assertEqual(len(first.data), piece_size)
         self.assertEqual(first.piece,0)
