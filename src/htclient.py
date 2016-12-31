@@ -241,7 +241,11 @@ class Pool(object):
         adder.start()
         
     def work(self, loader):
-        loader.init()
+        try:
+            loader.init()
+        except Exception:
+            logger.exception('(%s) Loader init failed in thread %s',  threading.current_thread().name)
+            raise
         while self._running:
             pc=self._queue.get_piece()
             if not self._running:
