@@ -5,7 +5,10 @@ Created on May 3, 2015
 '''
 
 import requests
-from requests.packages.urllib3.util import Retry 
+try:
+    from urllib3.util import Retry
+except ImportError:
+    from requests.packages.urllib3.util import Retry 
 import os.path
 import pickle
 from common import AbstractFile, BaseClient, Hasher, Resolver, TerminalColor
