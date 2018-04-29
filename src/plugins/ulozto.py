@@ -25,7 +25,7 @@ class UlozTo(Resolver):
     THREADS=4
     
     def resolve(self, url):
-        retries = 3
+        retries = 5
         while True:
             try:
                 return self._resolve(url)
@@ -88,7 +88,7 @@ class UlozTo(Resolver):
         res=self._client.open(urlparse.urljoin(base_url, action),data, method='post', streaming=True)  
         type_header=res.headers.get('Content-Type')
         
-        if not type_header.startswith('video') and not type_header.startswith('application/octet-stream'):
+        if not type_header or  (not type_header.startswith('video') and not type_header.startswith('application/octet-stream')):
             raise ResolveSoftError('Not resolved to a video link - mime %s' % type_header)
         file_url=res.url
         res.close()
