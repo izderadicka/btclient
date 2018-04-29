@@ -2,5 +2,5 @@ hachoir-metadata
 hachoir-core 
 hachoir-parser
 beautifulsoup4
-urllib3
-requests
+urllib3>=1.22
+requests>=2.18.4
