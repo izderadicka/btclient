@@ -49,7 +49,7 @@ class HTTPLoader(object):
         self._client.adapters.clear()
         self._client.mount('http', requests.adapters.HTTPAdapter(max_retries=Retry(total=5, 
                                                                     backoff_factor = 5.0/16,
-                                                                    status_forcelist=[500, 502, 503])))
+                                                                    status_forcelist=[500, 502, 503, 429])))
         self._client.headers['User-Agent'] = self.user_agent
         self.url=self.resolve_file_url(resolver_class, url)
         if not self.url:
