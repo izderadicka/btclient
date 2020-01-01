@@ -55,7 +55,7 @@ class Player(object):
                 raise Exception(msg)
         if player=='mplayer':
             return MPlayer(executable,on_play_time_change)
-        elif player=='vlc':
+        elif player=='vlc' or player=='vlc.exe':
             return Vlc(executable,on_play_time_change)
         elif player == 'mpv':
             return Mpv(executable, on_play_time_change)
@@ -100,7 +100,7 @@ class Player(object):
         else:
             if not base.endswith(os.sep):
                 base+=os.sep
-            p=urllib.quote(f.path) if re.match('^https?://',base) else f.path
+            p=urllib.quote(f.path) if re.match('^(https?|file)://',base) else f.path
             params.append(urlparse.urljoin(base, p))
             sin=open(os.devnull, 'rb')
         self._proc=subprocess.Popen(params, 
@@ -381,6 +381,9 @@ class Vlc(Player):
         self._poller=None
     
     def start(self, f, base, stdin, sub_lang=None, start_time=None, always_choose_subtitles=False):
+        if self._player.endswith(".exe") and not base.startswith('http'):
+            idx = base.find("/mnt/c/")
+            base = "file:///c:"+base[idx+6:]
         Player.start(self, f, base, stdin, sub_lang=sub_lang, start_time=start_time, always_choose_subtitles=always_choose_subtitles)
         self._poller=Vlc.Poller(self._on_play_time_change, self.is_playing)
     

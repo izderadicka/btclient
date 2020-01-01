@@ -204,8 +204,12 @@ class BTClient(BaseClient):
         self._ses=lt.session()
         if os.path.exists(self._state_file):
             with open(self._state_file) as f:
-                state=pickle.load(f)
-                self._ses.load_state(state)
+                try:
+                    state=pickle.load(f)
+                    self._ses.load_state(state)
+                except Exception as e:
+                    print >>sys.stderr, "Cannot restore state due to error", e
+                
         #self._ses.set_alert_mask(lt.alert.category_t.progress_notification)
         self._choose_file_flag = False
         if args:
@@ -586,7 +590,7 @@ def main(args=None):
     p=argparse.ArgumentParser()
     p.add_argument("url", help="Torrent file, link to file or magnet link")
     p.add_argument("-d", "--directory", default="./", help="directory to save download files")
-    p.add_argument("-p", "--player", default="mplayer", choices=["mplayer","vlc", "mpv"], help="Video player")
+    p.add_argument("-p", "--player", default="mplayer", choices=["mplayer","vlc", "vlc.exe", "mpv"], help="Video player")
     p.add_argument("--player-path", default=None, help="Video player path")
     p.add_argument("--port", type=int, default=5001, help="Port for http server")
     p.add_argument("--debug-log", default='',help="File for debug logging")
@@ -627,7 +631,7 @@ def main(args=None):
                         shutil.rmtree(full_path,ignore_errors=True)
                     else:
                         os.unlink(full_path)
-    
+    print "STREAMING URL: %s"%args.url
     if args.print_pieces:
         print_pieces(args) 
     elif re.match('https?://localhost', args.url):  

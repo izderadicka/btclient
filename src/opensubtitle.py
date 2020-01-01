@@ -35,7 +35,7 @@ class Urllib2Transport(xmlrpclib.Transport):
         if request_body:
             req.add_header("Content-Encoding", 'gzip')
         self.verbose = verbose
-        resp=self.opener.open(req)
+        resp=self.opener.open(req, timeout=5)
         if resp.headers.get("Content-Encoding") == 'gzip':
             resp = gzip.GzipFile(fileobj=StringIO(resp.read()),  mode='rb')
         return self.parse_response(resp)

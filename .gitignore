@@ -38,3 +38,4 @@ _$*
 /samples
 /libtorrent-code
 /.cache/
+.vscode

@@ -206,6 +206,9 @@ class Pool(object):
         adder.start()
         
     def work(self, loader):
+        local_status=threading.local()
+        local_status.errors = 0
+        local_status.lousy_speed = 0
         while self._running:
             pc=self._queue.get_piece()
             if not self._running:
@@ -213,17 +216,26 @@ class Pool(object):
             try:
                 start=time.time()
                 p=loader.load_piece(pc,self.piece_size)
+                local_status.errors = 0
                 self._cb(p.piece,p.data)
+                dur=time.time()-start
+                speed = self.piece_size/dur
+                if speed < 1024:
+                    logger.warn("I'M LOUSY - thread %s",threading.current_thread().name)
+                    local_status.lousy_speed+=1
+                elif local_status.lousy_speed > 0:
+                    local_status.lousy_speed-=1
                 if self.speed_limit:
-                    dur=time.time()-start
                     expected=self.piece_size/1024.0/self.speed_limit
                     wait_time=expected-dur
                     if wait_time>0:
                         logger.debug('Waiting %f on %s',wait_time, threading.current_thread().name)
                         time.sleep(wait_time)
             except Exception,e:
+                local_status.errors+=1
                 logger.exception('(%s) Error when loading piece %d: %s', threading.current_thread().name,pc,e)
-            
+            if local_status.errors>5 or local_status.lousy_speed>5:
+                logger.warn("Connection is lousy on thread %s", threading.current_thread().name)
     def stop(self):
         self._running=False
         #push some dummy tasks to assure workers ends
