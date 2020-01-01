@@ -219,6 +219,7 @@ class BTClient(BaseClient):
             self._ses.set_settings(s)
             self._ses.listen_on(args.listen_port_min, args.listen_port_max)
             self._choose_file_flag = args.choose_file 
+            self._zenity = args.zenity
         else:
             self._ses.listen_on(6881, 6891)
         self._start_services()
@@ -274,7 +275,8 @@ class BTClient(BaseClient):
         return f
     
     def _choose_file_dialog(self, files):
-        p=subprocess.Popen('zenity --list --title "Select video file" --text "Select best matching subtitles" --width 1024 --height 600 --column Index --column Name --column Size --hide-column=1', 
+        zenity = self._zenity if hasattr(self, '_zenity') and self._zenity else "zenity"
+        p=subprocess.Popen(zenity + ' --list --title "Select video file" --text "Select best matching subtitles" --width 1024 --height 600 --column Index --column Name --column Size --hide-column=1', 
                  stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, 
                  close_fds=sys.platform!='win32')  
         choices = map(lambda i,f: '%d\n%s\n%d'%(i, f.path.replace('"',''),f.size), range(len(files)), files)
@@ -609,6 +611,7 @@ def main(args=None):
     p.add_argument('--choose-subtitles',  action="store_true", help="Always manually choose subtitles (otherwise will try to use best match in many cases)" )
     p.add_argument('--trace', action='store_true', help='More detailed debug logging')
     p.add_argument('--choose-file', action='store_true', help='Manually choose if there are more video files in torrent (otherwise chooses biggest automatically)')
+    p.add_argument('--zenity', help='Full path to zenity, if not specified assumes zenity executable in on PATH')
     args=p.parse_args(args)
     if args.debug_log:
         logger.setLevel(logging.DEBUG)
@@ -664,7 +667,7 @@ def stream(args, client_class, resolver_class=None):
             
         
         if  not args.stream:
-            player=Player.create(args.player,args.player_path,c.update_play_time)
+            player=Player.create(args.player,args.player_path,c.update_play_time, zenity=args.zenity)
         
         server=None
         #test if port if free, otherwise find free

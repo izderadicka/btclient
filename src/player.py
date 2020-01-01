@@ -48,29 +48,30 @@ class Player(object):
             return ''.join(self._log)
         
     @staticmethod
-    def create(player,player_path,on_play_time_change=None):
+    def create(player,player_path,on_play_time_change=None, zenity=None):
         executable=find_executable(player, player_path)
         if not executable:
                 msg= "Cannot find player %s on path %s" % (player, str(player_path))
                 raise Exception(msg)
         if player=='mplayer':
-            return MPlayer(executable,on_play_time_change)
+            return MPlayer(executable,on_play_time_change, zenity)
         elif player=='vlc' or player=='vlc.exe':
-            return Vlc(executable,on_play_time_change)
+            return Vlc(executable,on_play_time_change, zenity)
         elif player == 'mpv':
-            return Mpv(executable, on_play_time_change)
+            return Mpv(executable, on_play_time_change, zenity)
         else:
             raise ValueError('Invalid player name %s'%player)
         
     OPTIONS=[]
                 
-    def __init__(self,player, on_play_time_change=None):
+    def __init__(self,player, on_play_time_change=None, zenity=None):
         self._player=player
         self._proc=None
         self._player_options=copy(self.OPTIONS)
         self._log =None
         self._started=Event()
         self._on_play_time_change=on_play_time_change
+        self._zenity =  zenity
     
     
     def modify_env(self):
@@ -120,7 +121,7 @@ class Player(object):
     def load_subs(self, filename, lang, filesize, filehash, always_choose_subtitles=False):
         logger.debug('Downloading %s subs for %s', lang, filename)
         res=  OpenSubtitles.download_if_not_exists(filename,lang, filesize, filehash,
-                            can_choose='always' if always_choose_subtitles else True)
+                            can_choose=always_choose_subtitles, zenity=self._zenity)
         if res:
             logger.debug('Loadeded subs')
             return self.subs_option(res)
@@ -230,8 +231,8 @@ class MPlayer(Player):
     INPUT_PIPE='/tmp/mplayer.pipe'
     OPTIONS=['-quiet', '-slave', '-input', 'file=%s' %INPUT_PIPE]#'--nocache']#'--cache=8192', '--cache-min=50']
     
-    def __init__(self, player, on_play_time_change=None):
-        Player.__init__(self, player, on_play_time_change)
+    def __init__(self, player, on_play_time_change=None, zenity = None):
+        Player.__init__(self, player, on_play_time_change, zenity)
         if not os.path.exists(self.INPUT_PIPE):
             os.mkfifo(self.INPUT_PIPE)
         
@@ -303,8 +304,8 @@ class Mpv(Player):
     INPUT_SOCKET='/tmp/mpv.socket'
     OPTIONS=['--quiet', '--input-ipc-server=%s'%INPUT_SOCKET]
     
-    def __init__(self, player, on_play_time_change=None):
-        Player.__init__(self, player, on_play_time_change=on_play_time_change)
+    def __init__(self, player, on_play_time_change=None, zenity=None):
+        Player.__init__(self, player, on_play_time_change=on_play_time_change, zenity=zenity)
         self._poller=None
     
     def start(self, f, base, stdin, sub_lang=None, start_time=None, always_choose_subtitles=False):
@@ -359,14 +360,14 @@ class Vlc(Player):
                     ans=self._reader.readline()
                 except socket.error,e:
                     logger.warn('Socket error in VLC poller - %s',e)
-                #logger.debug('ANS %s', ans)
-                pos=self.digits.search(ans)
-                if pos:
-                    pos=int(pos.group(0))
-                    if abs(self.position - pos)>=1 and self._cb:
-                        self._cb(pos)
-                    self.position = pos
-                           
+                else:
+                    #logger.debug('ANS %s', ans)
+                    pos=self.digits.search(ans)
+                    if pos:
+                        pos=int(pos.group(0))
+                        if abs(self.position - pos)>=1 and self._cb:
+                            self._cb(pos)
+                        self.position = pos
                 time.sleep(1)
                 
         def close(self):
@@ -376,8 +377,8 @@ class Vlc(Player):
             except:
                 logger.warn('Error closing VLC poller')
                 
-    def __init__(self, player, on_play_time_change=None):
-        Player.__init__(self, player, on_play_time_change=on_play_time_change)
+    def __init__(self, player, on_play_time_change=None, zenity=None):
+        Player.__init__(self, player, on_play_time_change=on_play_time_change, zenity=zenity)
         self._poller=None
     
     def start(self, f, base, stdin, sub_lang=None, start_time=None, always_choose_subtitles=False):
@@ -393,6 +394,10 @@ class Vlc(Player):
             self._poller.close()
 
     def subs_option(self, subs_file):
+        if self._player.endswith('.exe'):
+            #remap sub file to windows path
+            subs_file=subs_file.replace("/mnt/c", "c:").replace("/", "\\")
+            pass
         return ['--sub-file=%s'%subs_file]
     
     def start_time_option(self, time):

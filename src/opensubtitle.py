@@ -48,7 +48,7 @@ class OpenSubProblem(Exception):
 
 class OpenSubtitles(object):
     USER_AGENT='BTClient v%s'%__version__
-    def __init__(self, lang, user='', pwd=''):
+    def __init__(self, lang, user='', pwd='', zenity=None):
         self._lang=lang
         self._proxy=xmlrpclib.ServerProxy('http://api.opensubtitles.org/xml-rpc',
                                           Urllib2Transport(use_datetime=True),
@@ -56,6 +56,7 @@ class OpenSubtitles(object):
         self._token=None
         self._user=user
         self._pwd=pwd
+        self._zenity = zenity
         
         
     def login(self):
@@ -147,8 +148,8 @@ class OpenSubtitles(object):
             items.append(l['SubDownloadLink'])
             items.append(l['SubFileName'])
             items.append(l['SubDownloadsCnt'])
-        
-        p=subprocess.Popen('zenity --list --title "Select subtitles" --text "Select best matching subtitles" --width 1024 --height 600 --column Link --column Name --column Downloads --hide-column=1', 
+        zenity = self._zenity if self._zenity else "zenity"
+        p=subprocess.Popen(zenity+ ' --list --title "Select subtitles" --text "Select best matching subtitles" --width 1024 --height 600 --column Link --column Name --column Downloads --hide-column=1', 
                  stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, 
                  close_fds=sys.platform!='win32')  
         res,_=p.communicate(u'\n'.join(items).encode('utf-8'))
@@ -157,7 +158,7 @@ class OpenSubtitles(object):
     
     @staticmethod
     def download_if_not_exists(filename, lang, filesize=None, filehash=None, sub_ext='srt',
-                               can_choose=True, overwrite=False, retries=3, user='', pwd=''):
+                               can_choose=True, overwrite=False, retries=3, user='', pwd='', zenity=None):
         sfile=OpenSubtitles._sub_file(filename, lang, sub_ext)
         if os.path.exists(sfile) and os.stat(sfile).st_size>0 and not overwrite:
             logger.debug('subs %s are already downloaded', sfile)
@@ -165,7 +166,7 @@ class OpenSubtitles(object):
         else:
             while True:
                 try:
-                    with OpenSubtitles(lang, user, pwd) as opensub:
+                    with OpenSubtitles(lang, user, pwd, zenity=zenity) as opensub:
                         res=  opensub.download(filename,filesize,filehash,can_choose)
                     if res:
                         logger.debug('Subtitles %s downloaded', res)
