@@ -326,7 +326,7 @@ class Mpv(Player):
 
 class Vlc(Player):
     RC_PORT=4212
-    OPTIONS=['--no-video-title-show','--extraintf', 'rc', '--rc-host', 'localhost:%d'%RC_PORT]
+    OPTIONS=['-vvv','--no-video-title-show','--extraintf', 'rc', '--rc-host', 'localhost:%d'%RC_PORT]
     class Poller(Thread):
         def __init__(self, cb, live):
             Thread.__init__(self,name='Position poller')

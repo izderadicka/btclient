@@ -41,7 +41,15 @@ class UlozTo(Resolver):
         s=urlparse.urlsplit(url)
         base_url=urlparse.urlunsplit((s.scheme,s.netloc,'','',''))
         pg=self._client.load_page(url)
-        form=pg.find('form', {'id':'frm-download-freeDownloadTab-freeDownloadForm'})
+        button = pg.find('a','t-free-download-button')
+        if not button:
+            raise PluginError("Free download button not found")
+        form_link = button.get("data-href")
+        if not form_link:
+            raise PluginError("Button does not conatain data-href attribute")
+        dialog_url = urlparse.urljoin(base_url, form_link)
+        pg = self._client.load_page(dialog_url)
+        form=pg.find('form', {'id':'frm-freeDownloadForm-form'})
         if not form:
             recaptcha = pg.find('form', {'id':'frm-captchaComponent-accessForm'})
             if recaptcha:
@@ -51,8 +59,6 @@ class UlozTo(Resolver):
         action=form.attrs.get('action')
         if not action:
             raise PluginError('Form has no action')
-        if not form:
-            raise PluginError()
         inputs=form.find_all('input')
         data={}
         for input in inputs:
