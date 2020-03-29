@@ -33,7 +33,7 @@ def safe_unicode(s):
     if isinstance(s, unicode):
         return s
     else:
-        unicode(s, 'utf-8')
+        return unicode(s, 'utf-8')
 
 def get_duration(fn):
     p=createParser(safe_unicode(fn))

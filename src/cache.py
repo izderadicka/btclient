@@ -15,7 +15,7 @@ def safe_string(s):
     if isinstance(s, unicode):
         return s.encode('utf-8')
     else:
-        s
+        return s
 
 class Cache(object):
     CACHE_DIR='.cache'
