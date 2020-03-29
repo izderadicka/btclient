@@ -29,9 +29,14 @@ def enum(**enums):
 
 TerminalColor=enum(default='\033[39m',green='\033[32m', red='\033[31m', yellow='\033[33m')
 
+def safe_unicode(s):
+    if isinstance(s, unicode):
+        return s
+    else:
+        unicode(s, 'utf-8')
 
 def get_duration(fn):
-    p=createParser(unicode(fn, 'utf-8'))
+    p=createParser(safe_unicode(fn))
     m=extractMetadata(p)
     if m:
         return m.getItem('duration',0) and m.getItem('duration',0).value

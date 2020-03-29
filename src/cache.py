@@ -11,6 +11,12 @@ import logging
 import base64
 logger=logging.getLogger('cache')
 
+def safe_string(s):
+    if isinstance(s, unicode):
+        return s.encode('utf-8')
+    else:
+        s
+
 class Cache(object):
     CACHE_DIR='.cache'
     def __init__(self, path):
@@ -96,8 +102,8 @@ class Cache(object):
             raise ValueError('Not BT magnet link')
         
     def play_position(self, info_hash, path='', secs=0):
-        self._last_pos[info_hash+path]=secs
+        self._last_pos[info_hash+safe_string(path)]=secs
         
     def get_last_position(self, info_hash, path=''):
-        return self._last_pos.get(info_hash+path) or 0
+        return self._last_pos.get(info_hash+safe_string(path)) or 0
         
