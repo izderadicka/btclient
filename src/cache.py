@@ -12,6 +12,8 @@ import base64
 logger=logging.getLogger('cache')
 
 def safe_string(s):
+    if s is None:
+        return ""
     if isinstance(s, unicode):
         return s.encode('utf-8')
     else:

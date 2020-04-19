@@ -346,20 +346,31 @@ class Vlc(Player):
                         raise e
                     
             self._reader=self._socket.makefile('rb')
-            for i in xrange(2):
-                l=self._reader.readline()
-                logger.debug('VLC CLI - %s',l)
+            self._sender=Thread(name="Position poller - sender thread", target=self.send_time_requests)
+            self._sender.setDaemon(True)
             self.position=0
             self.start()
+            self._sender.start()
+
         
-        digits=re.compile(r'\d+')    
-        def run(self):
+        def send_time_requests(self):
             while self._live():
                 try:
                     self._socket.send('get_time\n')
+                except socket.error,e:
+                    logger.warn('Socket error in VLC poller - %s',e)
+                    break
+                time.sleep(10)
+
+        digits=re.compile(r'^\d+\s*$')
+
+        def run(self):
+            while self._live():
+                try:
                     ans=self._reader.readline()
                 except socket.error,e:
                     logger.warn('Socket error in VLC poller - %s',e)
+                    break
                 else:
                     #logger.debug('ANS %s', ans)
                     pos=self.digits.search(ans)
@@ -368,7 +379,7 @@ class Vlc(Player):
                         if abs(self.position - pos)>=1 and self._cb:
                             self._cb(pos)
                         self.position = pos
-                time.sleep(1)
+                
                 
         def close(self):
             try:
