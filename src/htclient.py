@@ -234,6 +234,8 @@ class Pool(object):
             except Exception,e:
                 local_status.errors+=1
                 logger.exception('(%s) Error when loading piece %d: %s', threading.current_thread().name,pc,e)
+                
+                #return 
             if local_status.errors>5 or local_status.lousy_speed>5:
                 logger.warn("Connection is lousy on thread %s", threading.current_thread().name)
     def stop(self):
@@ -297,12 +299,14 @@ class HTClient(BaseClient):
                          self.update_piece, speed_limit=self.resolver_class.SPEED_LIMIT if hasattr(self.resolver_class,'SPEED_LIMIT') else None)
             def gen_loader(i):
                 return HTTPLoader(uri,i,self.resolver_class)
-            for i in xrange(1,self._no_threads):
-                self._pool.add_worker_async(i, gen_loader, (i,))
             #get remaining pieces with normal priority
             for i in xrange(1, self._file.last_piece+1):
                 if not self._file.pieces[i]:
                     self._pool.add_piece(i)
+            #start workers        
+            for i in xrange(1,self._no_threads):
+                self._pool.add_worker_async(i, gen_loader, (i,))
+            
             
         self.hash=Hasher(self._file, self._on_file_ready)
         
