@@ -145,6 +145,7 @@ class HTTPLoader(object):
 
 class PriorityQueue(Queue.PriorityQueue):
     NORMAL_PRIORITY=99
+    HIGHER_PRIORITY=49
     NO_DOWNLOAD=999
     NO_PIECE=-1
     def __init__(self):
@@ -234,8 +235,9 @@ class Pool(object):
             except Exception,e:
                 local_status.errors+=1
                 logger.exception('(%s) Error when loading piece %d: %s', threading.current_thread().name,pc,e)
-                
-                #return 
+
+                # re-add failed piece back with higher priority
+                self._queue.put_piece(pc, PriorityQueue.HIGHER_PRIORITY)
             if local_status.errors>5 or local_status.lousy_speed>5:
                 logger.warn("Connection is lousy on thread %s", threading.current_thread().name)
     def stop(self):
