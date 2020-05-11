@@ -21,6 +21,7 @@ import subprocess
 from distutils.spawn import find_executable
 from copy import copy
 
+OPENSUBTITLES_USER_FILE = "~/.opensubtitles"
 
 class Player(object):
     class Log():
@@ -117,11 +118,22 @@ class Player(object):
     
     def start_time_option(self, time):
         raise NotImplementedError()
+
+    def load_open_subtitles_user(self):
+        f=os.path.expanduser(OPENSUBTITLES_USER_FILE)
+        if os.access(f, os.R_OK):
+            with open(f, "r") as of:
+                user = of.readline().strip()
+                password = of.readline().strip()
+            return (user, password)
+        return ("", "")
+        
     
     def load_subs(self, filename, lang, filesize, filehash, always_choose_subtitles=False):
         logger.debug('Downloading %s subs for %s', lang, filename)
+        user, password = self.load_open_subtitles_user()
         res=  OpenSubtitles.download_if_not_exists(filename,lang, filesize, filehash,
-                            can_choose=always_choose_subtitles, zenity=self._zenity)
+                            can_choose=always_choose_subtitles, zenity=self._zenity, user=user, pwd=password)
         if res:
             logger.debug('Loadeded subs')
             return self.subs_option(res)
