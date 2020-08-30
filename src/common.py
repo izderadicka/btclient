@@ -19,6 +19,7 @@ from cache import Cache
 import time
 import shutil
 import urlparse
+import random
 from multiprocessing import Process, Value
 
 logger=logging.getLogger('common')
@@ -489,4 +490,11 @@ class Resolver(object):
         if path.startswith('/'):
             path=path[1:]
         return path
+
+def rand_multiplier(mean, dev=None):
+    if not dev:
+        dev = mean
+    multiplier = random.normalvariate(10, 10)
+    multiplier = multiplier if multiplier > 1 else 1
+    return multiplier
     

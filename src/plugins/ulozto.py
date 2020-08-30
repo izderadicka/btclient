@@ -4,7 +4,7 @@ Created on May 6, 2015
 @author: ivan
 '''
 
-from common import Resolver
+from common import Resolver, rand_multiplier
 from plugins import PluginError
 import urlparse
 import time
@@ -13,6 +13,7 @@ import adecaptcha.clslib as clslib
 import re
 import logging
 from io import BytesIO
+from time import sleep
 
 logger = logging.getLogger('ulozto-plugin')
 
@@ -32,6 +33,7 @@ class UlozTo(Resolver):
             except ResolveSoftError,e:
                 if retries>0:
                     logger.debug('Got error that could be retried: %s', e)
+                    sleep(rand_multiplier(2) * (6-retries))
                     retries-=1
                 else:
                     raise
@@ -43,6 +45,8 @@ class UlozTo(Resolver):
         pg=self._client.load_page(url)
         button = pg.find('a','t-free-download-button')
         if not button:
+            # with open("/tmp/bt-page-error-button-%s.html" % str(time.time()),"wb") as f:
+            #     f.write(str(pg))
             raise PluginError("Free download button not found")
         form_link = button.get("data-href")
         if not form_link:
@@ -86,6 +90,7 @@ class UlozTo(Resolver):
             raise ResolveSoftError('Cannot load audio captcha')
         cfg_file=os.path.join(os.path.split(clslib.__file__)[0], 'ulozto.cfg')
         captcha= clslib.classify_audio_file(audio, cfg_file, ext=sound_ext)
+        
         if not captcha and len(captcha)!=4:
             raise PluginError('Invalid decoded captcha')
         
@@ -95,6 +100,9 @@ class UlozTo(Resolver):
         type_header=res.headers.get('Content-Type')
         
         if not type_header or  (not type_header.startswith('video') and not type_header.startswith('application/octet-stream')):
+            logger.error("Not resolved as video, CAPTCHA decoded as %s for url %s", captcha, sound_url)
+            # with open("/tmp/bt-page-error-mime-%s.html" % str(time.time()),"wb") as f:
+            #     f.write(str(pg))
             raise ResolveSoftError('Not resolved to a video link - mime %s' % type_header)
         file_url=res.url
         res.close()

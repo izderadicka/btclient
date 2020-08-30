@@ -21,11 +21,14 @@ import re
 import Queue
 import collections
 from threading import Lock, Thread
+from time import sleep
 import sys
 import threading
 from bs4 import BeautifulSoup
 import json
 from collections import deque
+from common import rand_multiplier
+
 
 logger=logging.getLogger('htclient')
 
@@ -300,7 +303,19 @@ class HTClient(BaseClient):
             self._pool=Pool(self.piece_size, [c0],
                          self.update_piece, speed_limit=self.resolver_class.SPEED_LIMIT if hasattr(self.resolver_class,'SPEED_LIMIT') else None)
             def gen_loader(i):
-                return HTTPLoader(uri,i,self.resolver_class)
+                retries = 5
+                while True:
+                    try: 
+                        return HTTPLoader(uri,i,self.resolver_class)
+                    except Exception as e:
+                        multiplier = rand_multiplier(10)
+                        sleep(multiplier*(6-retries))
+                        retries -= 1
+                        if retries == 0:
+                            raise Exception("Cannot start loader thread: %s", e)
+
+
+
             #get remaining pieces with normal priority
             for i in xrange(1, self._file.last_piece+1):
                 if not self._file.pieces[i]:
@@ -308,6 +323,7 @@ class HTClient(BaseClient):
             #start workers        
             for i in xrange(1,self._no_threads):
                 self._pool.add_worker_async(i, gen_loader, (i,))
+                sleep(i)
             
             
         self.hash=Hasher(self._file, self._on_file_ready)
