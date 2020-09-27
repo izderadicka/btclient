@@ -265,7 +265,10 @@ class HTClient(BaseClient):
     def update_piece(self,piece, data):
         self._file.update_piece(piece, data)
         if not self._ready and hasattr(self._file,'filehash') and self._file.filehash \
-            and all(self._file.pieces[:5]):
+            and all(self._file.pieces[:5]) and (
+                self._file.pct_complete > 5.0 or 
+                (self.status.desired_rate> 0 and self.status.download_rate  > self.status.desired_rate * 1.1)
+            ):
             self._set_ready(self._file.is_complete)
         
     def request_piece(self, piece, priority):
@@ -495,7 +498,11 @@ class HTFile(AbstractFile):
             elif p:
                 sum+= self.piece_size
                 
-        return sum      
+        return sum
+
+    @property
+    def pct_complete(self):
+        return 100.0 * sum(self.pieces) / len(self.pieces)      
     
     def remove(self):
         AbstractFile.remove(self)
