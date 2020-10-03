@@ -74,14 +74,14 @@ class HTTPLoader(object):
             raise HTTPLoader.Error('Invalid range header')
         return int(m.group(1)), int(m.group(2)), int(m.group(3))
     
-    def open(self, url, data=None, headers={}, method='get', streaming = False ):
+    def open(self, url, data=None, headers={}, method='get', streaming = False, allow_redirects=True ):
         assert(method == 'get' or method == 'post')
         
         try:
             res = self._client.request(method, url, params=data if method == 'get' else None, 
                            data = data if method == 'post' else None,
                            headers = headers, timeout = 10,
-                           stream = streaming)
+                           stream = streaming, allow_redirects = allow_redirects)
             res.raise_for_status()
         
         except Exception,e:
@@ -123,9 +123,7 @@ class HTTPLoader(object):
         res.close()
         return Piece(piece_no,data,size,type_header)
     
-    
-    def load_page(self, url, data=None, method='get'):
-        res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate"}, method=method)
+    def finish_page(self, res):
         #Content-Type:"text/html; charset=utf-8"
         type_header=res.headers.get('Content-Type')
         if not type_header.startswith('text/html'):
@@ -134,6 +132,10 @@ class HTTPLoader(object):
         data=res.content
         pg=BeautifulSoup(data, HTTPLoader.PARSER)
         return pg
+
+    def load_page(self, url, data=None, method='get'):
+        res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate"}, method=method)
+        return self.finish_page(res)
     
     def load_json(self,url,data,method='get'):
         res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate", 'X-Requested-With':'XMLHttpRequest'}, method=method)

@@ -52,51 +52,60 @@ class UlozTo(Resolver):
         if not form_link:
             raise PluginError("Button does not conatain data-href attribute")
         dialog_url = urlparse.urljoin(base_url, form_link)
-        pg = self._client.load_page(dialog_url)
-        form=pg.find('form', {'id':'frm-freeDownloadForm-form'})
-        if not form:
-            recaptcha = pg.find('form', {'id':'frm-captchaComponent-accessForm'})
-            if recaptcha:
-                raise PluginError('Need recaptcha - cannot resolve it now')
-            else:
-                raise PluginError('Cannot find download form - page changed?')
-        action=form.attrs.get('action')
-        if not action:
-            raise PluginError('Form has no action')
-        inputs=form.find_all('input')
-        data={}
-        for input in inputs:
-            if input.attrs.has_key('name'):
-                data[input['name']]=input['value'].encode('utf8','ignore') if input.attrs.has_key('value') else None
-                
-        if not all([key in data for key in ('captcha_value', 'timestamp', 'salt', 'hash')]):
-            raise PluginError('Required inputs are missing')
+        res = self._client.open(dialog_url, allow_redirects=False)
+        if res.status_code == 200:
+            pg = self._client.finish_page(res)
+
+            form=pg.find('form', {'id':'frm-freeDownloadForm-form'})
+            if not form:
+                recaptcha = pg.find('form', {'id':'frm-captchaComponent-accessForm'})
+                if recaptcha:
+                    raise PluginError('Need recaptcha - cannot resolve it now')
+                else:
+                    raise PluginError('Cannot find download form - page changed?')
+            action=form.attrs.get('action')
+            if not action:
+                raise PluginError('Form has no action')
+            inputs=form.find_all('input')
+            data={}
+            for input in inputs:
+                if input.attrs.has_key('name'):
+                    data[input['name']]=input['value'].encode('utf8','ignore') if input.attrs.has_key('value') else None
+                    
+            if not all([key in data for key in ('captcha_value', 'timestamp', 'salt', 'hash')]):
+                raise PluginError('Required inputs are missing')
+            
+            xapca = self._client.load_json("https://www.ulozto.net/reloadXapca.php", {"rnd": str(int(time.time()))}, method='get')
+            sound_url=xapca.get('sound') 
+            if not sound_url:
+                raise PluginError('No sound captcha')
+            if not re.match('^https?:', sound_url):
+                sound_url='https:'+sound_url
+            sound_ext=os.path.splitext(urlparse.urlsplit(sound_url).path)[1]
+            try:
+                audio_res=self._client.open(sound_url, method='get')
+                audio_bytes = audio_res.content
+                if len(audio_bytes) < 100:
+                    raise ResolveSoftError('Invalid audio captcha, too small')
+                audio = BytesIO(audio_bytes)
+            except self._client.Error,e:
+                logger.exception('Cannot get audio captcha')
+                raise ResolveSoftError('Cannot load audio captcha')
+            cfg_file=os.path.join(os.path.split(clslib.__file__)[0], 'ulozto.cfg')
+            captcha= clslib.classify_audio_file(audio, cfg_file, ext=sound_ext)
+            
+            if not captcha and len(captcha)!=4:
+                raise PluginError('Invalid decoded captcha')
+            
+            data.update({'timestamp': xapca['timestamp'], 'salt': xapca['salt'], 'hash': xapca['hash'], 'captcha_value': captcha})
+            
+            res=self._client.open(urlparse.urljoin(base_url, action),data, method='post', streaming=True)
+        elif res.status_code == 302:
+            res = self._client.open(res.headers['Location'], streaming=True)
+            captcha, sound_url = "NO_CAPTCHA_NEEDED", ""
+        else:
+            raise PluginError("Cannot get download dialog, status is %s" % res.status_code)
         
-        xapca = self._client.load_json("https://www.ulozto.net/reloadXapca.php", {"rnd": str(int(time.time()))}, method='get')
-        sound_url=xapca.get('sound') 
-        if not sound_url:
-            raise PluginError('No sound captcha')
-        if not re.match('^https?:', sound_url):
-            sound_url='https:'+sound_url
-        sound_ext=os.path.splitext(urlparse.urlsplit(sound_url).path)[1]
-        try:
-            audio_res=self._client.open(sound_url, method='get')
-            audio_bytes = audio_res.content
-            if len(audio_bytes) < 100:
-                raise ResolveSoftError('Invalid audio captcha, too small')
-            audio = BytesIO(audio_bytes)
-        except self._client.Error,e:
-            logger.exception('Cannot get audio captcha')
-            raise ResolveSoftError('Cannot load audio captcha')
-        cfg_file=os.path.join(os.path.split(clslib.__file__)[0], 'ulozto.cfg')
-        captcha= clslib.classify_audio_file(audio, cfg_file, ext=sound_ext)
-        
-        if not captcha and len(captcha)!=4:
-            raise PluginError('Invalid decoded captcha')
-        
-        data.update({'timestamp': xapca['timestamp'], 'salt': xapca['salt'], 'hash': xapca['hash'], 'captcha_value': captcha})
-        
-        res=self._client.open(urlparse.urljoin(base_url, action),data, method='post', streaming=True)  
         type_header=res.headers.get('Content-Type')
         
         if not type_header or  (not type_header.startswith('video') and not type_header.startswith('application/octet-stream')):
