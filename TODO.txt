@@ -1,2 +1,0 @@
-- use requests for HTTPLoader in htclient -   first it should enable threadsafe reuse (c0) and also can use 
-keep alive connections for better performance.
