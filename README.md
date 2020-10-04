@@ -31,12 +31,15 @@ From torrent file chooses the biggest video file, starts to download it  and sen
 
 Can also download subtitles for current video file (option -s - uses opensubtitles.org API).
 
-Requires libtorrent (1.0.x) and its python bindings,  gnome-terminal and hachoir python libraries.
-Optionally  beautifulsoup and adecaptcha for plugins.
+Requires libtorrent (1.0.x) and its python bindings,  requests,  hachoir-metadata, hachoir-parser and hachoir-core 
+python libraries. 
+Optionally  beautifulsoup4 and adecaptcha for plugins.
 
 
 Install
 -------
+
+BTClient is still python2 - so it might require some manual actions during install ( assure you have python 2.7, also hachoir is not on pip anymore - so install from debian packages or manualy for hachoir directory)
 
 Now manual (Ubuntu 14.04):
 ```

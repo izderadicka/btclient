@@ -1,0 +1,1 @@
+hachoir packages for Python 2.7

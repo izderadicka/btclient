@@ -13,4 +13,5 @@ make
 sudo make install
 sudo ldconfig
 cd ..
-sudo pip install -r requirements.txt
+sudo apt-get install -y python-hachoir-core python-hachoir-parser python-hachoir-metadata
+pip install -r requirements.txt
