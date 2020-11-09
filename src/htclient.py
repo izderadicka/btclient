@@ -137,7 +137,7 @@ class HTTPLoader(object):
         res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate"}, method=method)
         return self.finish_page(res)
     
-    def load_json(self,url,data,method='get'):
+    def load_json(self,url,data={},method='get'):
         res=self.open(url,data,headers={'Accept-Encoding':"gzip, deflate", 'X-Requested-With':'XMLHttpRequest'}, method=method)
         type_header=res.headers.get('Content-Type')
         if not type_header.startswith('application/json'):
@@ -269,7 +269,7 @@ class HTClient(BaseClient):
         if not self._ready and hasattr(self._file,'filehash') and self._file.filehash \
             and all(self._file.pieces[:5]) and (
                 self._file.pct_complete > 5.0 or 
-                (self.status.desired_rate> 0 and self.status.download_rate  > self.status.desired_rate * 1.1)
+                (self.status.desired_rate> 0 and self.status.download_rate  > self.status.desired_rate * 1.2)
             ):
             self._set_ready(self._file.is_complete)
         

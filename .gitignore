@@ -39,3 +39,4 @@ _$*
 /libtorrent-code
 /.cache/
 .vscode
+src/plugins/datoid.accounts

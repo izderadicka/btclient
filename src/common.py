@@ -37,10 +37,13 @@ def safe_unicode(s):
         return unicode(s, 'utf-8')
 
 def get_duration(fn):
-    p=createParser(safe_unicode(fn))
-    m=extractMetadata(p)
-    if m:
-        return m.getItem('duration',0) and m.getItem('duration',0).value
+    try:
+        p=createParser(safe_unicode(fn))
+        m=extractMetadata(p)
+        if m:
+            return m.getItem('duration',0) and m.getItem('duration',0).value
+    except Exception as e:
+        logger.error("Metadata errror: cannot get duration: %s", e)
 
 # This function should be called in separate process because hachoir has problem with memory - might just 
 # allocate  too much memory so it;s better to run in separate process 
