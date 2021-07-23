@@ -2,6 +2,7 @@ BTClient
 --------
 [![Build Status](https://travis-ci.org/izderadicka/btclient.svg?branch=master)](https://travis-ci.org/izderadicka/btclient)
 
+
 Simple Bit Torrent client (command line),  that enables sequential download and then streams video to 
 video player (via http or stdin, but stdin is not seekable), when got enough of the file content is available
 to start playback. Also supports HTTP sources, when it can download video from several connections 
@@ -41,11 +42,12 @@ Install
 
 BTClient is still python2 - so it might require some manual actions during install ( assure you have python 2.7, also hachoir is not on pip anymore - so install from debian packages or manualy for hachoir directory)
 
-Now manual (Ubuntu 14.04):
+Now manual (Ubuntu 20.04):
 ```
 git clone --depth 1 https://github.com/izderadicka/btclient.git
 cd btclient/
-./install.sh
+./install.sh  # updated for Ubuntu 20.04
+              # for older version it might work, but for newer version it might have problem as python2 support is disapearing
 #optionally you can run tests
 #python tests/all.py
 cp -r src  somewhere

@@ -40,3 +40,4 @@ _$*
 /.cache/
 .vscode
 src/plugins/datoid.accounts
+src/hachoir_*

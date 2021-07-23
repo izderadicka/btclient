@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 from _version import __version__
 import libtorrent as lt
 import time
