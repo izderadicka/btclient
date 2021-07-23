@@ -13,4 +13,4 @@ PLAYER=mplayer
 elif [ "$2" = "mpv" ]; then
 PLAYER=mpv
 fi
-gnome-terminal --disable-factory --geometry=120x3 --hide-menubar -x python $INST_DIR/btclient.py -d ~/Downloads/torrents --debug-log /tmp/btclient.log -p $PLAYER -s eng   --choose-subtitles --choose-file "$1" 
+gnome-terminal --disable-factory --geometry=120x3 --hide-menubar -- python2 $INST_DIR/btclient.py -d ~/Downloads/torrents --debug-log /tmp/btclient.log -p $PLAYER -s eng   --choose-subtitles --choose-file "$1" 
