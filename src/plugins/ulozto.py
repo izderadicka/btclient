@@ -22,8 +22,8 @@ class ResolveSoftError(Exception):
 
 class UlozTo(Resolver):
     URL_PATTERN=r'https://(?:www\.)?(uloz\.to|ulozto\.(cz|sk|net)|bagruj.cz|zachowajto.pl)/(?:live/)?(?P<id>[!\w]+/[^/?]*)'
-    SPEED_LIMIT=300
-    THREADS=4
+    SPEED_LIMIT=600
+    THREADS=2
     
     def resolve(self, url):
         retries = 5
